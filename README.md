@@ -17,6 +17,17 @@ models into the output formats used downstream:
 It is the shared, dependency-light foundation (only `pydantic` and `PyYAML`) consumed by
 the private `makorele` parser and by the process-documentation webapp.
 
+## Separation of concerns
+
+Part of the Hochfrequenz MaKo tooling — **four repositories, one responsibility each**:
+
+- **[makoralle](https://github.com/Hochfrequenz/makoralle)** (public, [PyPI](https://pypi.org/project/makoralle/)) — the **data model** + serializers. ← **this repo**
+- **[makorele](https://github.com/Hochfrequenz/makorele)** (private) — the **parser** (BDEW PDFs → validated models).
+- **[machine-readable_mako-prozesse](https://github.com/Hochfrequenz/machine-readable_mako-prozesse)** (private) — the generated **dataset**, consumed at a pinned tag.
+- **[mako_prozesse](https://github.com/Hochfrequenz/mako_prozesse)** — the **web app** that presents the dataset.
+
+Dependencies flow one way: `makorele` → `makoralle`; the dataset is produced by the tooling and consumed by the web app at a pinned tag. `makoralle` imports neither the parser nor the app.
+
 ## Installation
 
 ```bash
