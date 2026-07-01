@@ -1,10 +1,10 @@
 [project]
-name = "your-favourite-package-name"
-description = "Description of your package"
+name = "makoralle"
+description = "Pydantic models for the German MaKo (Marktkommunikation) processes and serialization of those models to output formats (YAML, WSD sequence-diagram DSL, BPMN, Markdown)."
 license = { text = "MIT" }
 requires-python = ">=3.11"
-authors = [{ name = "your name", email = "your@email.address" }]
-keywords = ["your", "important", "keywords"]
+authors = [{ name = "Hochfrequenz Unternehmensberatung GmbH", email = "info@hochfrequenz.de" }]
+keywords = ["mako", "marktkommunikation", "energy", "bdew", "pydantic", "bpmn"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -18,7 +18,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
 ]
-dependencies = []     # add all the dependencies here
+dependencies = [
+    "pydantic>=2.0",
+    "PyYAML>=6.0",
+]
 dynamic = ["readme", "version"]
 
 [project.optional-dependencies]
@@ -29,7 +32,8 @@ linting = [
     "pylint==4.0.6"
 ]
 type_check = [
-    "mypy==2.1.0"
+    "mypy==2.1.0",
+    "types-PyYAML==6.0.12.20260518"
 ]
 spell_check = [
     "codespell==2.4.2"
@@ -51,8 +55,8 @@ dev = [
 
 
 [project.urls]
-Changelog = "https://github.com/Hochfrequenz/python_template_repository/releases"
-Homepage = "https://github.com/Hochfrequenz/python_template_repository"
+Changelog = "https://github.com/Hochfrequenz/makoralle/releases"
+Homepage = "https://github.com/Hochfrequenz/makoralle"
 
 [tool.black]
 line-length = 120
@@ -83,7 +87,7 @@ fragments = [{ path = "README.md" }]
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/_your_package_version.py"
+version-file = "src/_makoralle_version.py"
 template = '''
 version = "{version}"
 '''
