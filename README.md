@@ -1,4 +1,4 @@
-# makoralle
+# makoralle 🪸
 
 ![Unittests status badge](https://github.com/Hochfrequenz/makoralle/workflows/Unittests/badge.svg)
 ![Coverage status badge](https://github.com/Hochfrequenz/makoralle/workflows/Coverage/badge.svg)
