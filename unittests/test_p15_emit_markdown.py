@@ -116,6 +116,20 @@ def test_deadline_legend_explains_vocabulary() -> None:
     assert "ÜZ" in text or "ÜT" in text
 
 
+def test_deadline_legend_emitted_for_terminiert() -> None:
+    sd = {"steps": [{"nr": 1, "deadline_rule": {"type": "terminiert", "anchor": "Zahlungsziel"}}]}
+    text = "\n".join(_deadline_legend(sd))
+    assert text  # legend shown
+    assert "vor" in text and "nach" in text  # explains the terminiert direction vocabulary
+
+
+def test_deadline_legend_emitted_for_reference_note() -> None:
+    sd = {"steps": [{"nr": 1, "deadline_rule": {"type": "reference", "raw": "Gemäß Rahmenvertrag."}}]}
+    text = "\n".join(_deadline_legend(sd))
+    assert "(i)" in text  # explains the info note
+    assert "REVIEW" not in text  # a pure-reference SD needs no [REVIEW] legend line
+
+
 def test_sd_table_keeps_full_complex_deadline() -> None:
     long_raw = "spätestens 5 Werktage vor dem geplanten Zuordnungsbeginn der Marktlokation X"
     sd = {"steps": [{"nr": 1, "sender": "NB", "receiver": "LF", "message": "Prüfung", "deadline": long_raw}]}
