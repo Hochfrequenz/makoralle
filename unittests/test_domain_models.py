@@ -2,6 +2,7 @@ from makoralle.models.activity import ActivityDiagram, ADEdge, ADNode
 from makoralle.models.ebd import DecisionStep, DecisionTree
 from makoralle.models.pid import PIDMapping
 from makoralle.models.process import (
+    DeadlineRule,
     NamedSD,
     Process,
     SDBranch,
@@ -11,6 +12,34 @@ from makoralle.models.process import (
     SequenceDiagram,
     UseCase,
 )
+
+
+def test_deadline_rule_defaults_for_new_fields() -> None:
+    """The anchor/direction/recurring fields default to None/None/False so existing
+    (pre-extension) rules deserialize unchanged."""
+    rule = DeadlineRule(type="unverzüglich", raw="Unverzüglich")
+    assert rule.direction is None
+    assert rule.anchor is None
+    assert rule.recurring is False
+
+
+def test_deadline_rule_terminiert_roundtrips_external_anchor() -> None:
+    """A 'terminiert' rule carrying a WT count relative to an external, non-step
+    anchor round-trips through model_dump/model_validate."""
+    rule = DeadlineRule(
+        type="terminiert",
+        direction="vor",
+        business_days=20,
+        reference_event="ÜT",
+        anchor="Änderungstermin",
+        raw="Spätester ÜT ist der 20. WT vor dem gewünschten Änderungstermin.",
+    )
+    back = DeadlineRule.model_validate(rule.model_dump())
+    assert back.type == "terminiert"
+    assert back.direction == "vor"
+    assert back.business_days == 20
+    assert back.anchor == "Änderungstermin"
+    assert back.recurring is False
 
 
 def test_use_case() -> None:

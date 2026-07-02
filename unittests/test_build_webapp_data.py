@@ -128,6 +128,17 @@ def test_extract_review_notes_parses_wsd_lines() -> None:
     assert extract_review_notes(wsd) == ["(!) Frist: Deaktivierung"]
 
 
+def test_extract_review_notes_ignores_info_frist_notes() -> None:
+    """A 'reference' deadline renders as an (i) note without [REVIEW]; it must NOT be
+    surfaced as a review item ("Prüfung nötig")."""
+    wsd = (
+        "title X\n"
+        "note right of NB: (i) Frist: Gemäß Rahmenvertrag.\n"
+        "note right of LF: (!) Frist: Echtes Review  [REVIEW]\n"
+    )
+    assert extract_review_notes(wsd) == ["(!) Frist: Echtes Review"]
+
+
 def test_sd_source_hash_ignores_whitespace_churn_but_not_content() -> None:
     base = "title X\nNB->ÜNB: Anmeldung\n"
     # leading/trailing whitespace + CRLF line endings normalize away

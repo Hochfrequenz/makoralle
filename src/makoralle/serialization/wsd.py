@@ -41,7 +41,29 @@ def _deadline_tag(rule: DeadlineRule | None) -> str:
             evt = rule.reference_event or ""
             parts.append(f"{evt}#{rule.reference_step}")
         return "{" + " ".join(parts) + "}" if parts else "{u}"
+    if rule.type == "terminiert":
+        return "{" + _terminiert_core(rule) + "}"
     return ""
+
+
+def _terminiert_core(rule: DeadlineRule) -> str:
+    """Inner text of a ``terminiert`` tag — a 'spätester' deadline fixed relative to
+    an external anchor. Always leads with ``≤`` (or ``täglich``). Examples:
+    ``≤20WT vor Änderungstermin``, ``≤11WT nach #2``, ``≤Zahlungsziel``,
+    ``täglich ≤14:00``."""
+    if rule.recurring:
+        return f"täglich ≤{rule.latest_time}" if rule.latest_time else "täglich"
+    anchor = f"#{rule.reference_step}" if rule.reference_step else rule.anchor
+    if rule.business_days is not None:
+        core = f"≤{rule.business_days}WT"
+        if rule.direction:
+            core += f" {rule.direction}"
+        return f"{core} {anchor}" if anchor else core
+    if rule.latest_time:
+        return f"≤{rule.latest_time} {anchor}" if anchor else f"≤{rule.latest_time}"
+    if anchor:
+        return f"≤{anchor}"
+    return "terminiert"
 
 
 def _clean_note_text(text: str) -> str:
@@ -57,7 +79,7 @@ def _deadline_note(step: SDStep, participants: list[str]) -> str | None:
     subprocess step that is the sender lifeline (via ``_ref_lifeline``), since
     Vision often mis-guesses the receiver of a ref."""
     dl = step.deadline_rule
-    if not dl or dl.type != "complex" or not dl.raw:
+    if not dl or dl.type not in ("complex", "reference") or not dl.raw:
         return None
     if (step.message or "").strip().lower().startswith("ref "):
         who = _ref_lifeline(step, participants)
@@ -65,7 +87,13 @@ def _deadline_note(step: SDStep, participants: list[str]) -> str | None:
         who = step.receiver if step.receiver and step.receiver != "?" else step.sender
     if not who or who == "?":
         return None
-    return f"note right of {who}: (!) Frist: {_clean_note_text(dl.raw)}  [REVIEW]"
+    text = _clean_note_text(dl.raw)
+    # A "reference" deadline is real but irreducible (points to another table/SD/
+    # contract, or is conditional): keep it visible as an (i) note, but WITHOUT the
+    # [REVIEW] flag so extract_review_notes never surfaces it as "Prüfung nötig".
+    if dl.type == "reference":
+        return f"note right of {who}: (i) Frist: {text}"
+    return f"note right of {who}: (!) Frist: {text}  [REVIEW]"
 
 
 def _build_step_paths(fragments: list[SDFragment]) -> dict[int, list[tuple[SDFragment, int]]]:

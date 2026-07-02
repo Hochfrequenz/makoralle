@@ -10,11 +10,16 @@ from pydantic import BaseModel, model_validator
 class DeadlineRule(BaseModel):
     """Structured deadline derived from free-text Frist."""
 
-    type: str  # "unverzüglich", "parallel", "none", "complex"
+    type: str  # "unverzüglich", "parallel", "none", "complex",
+    # "terminiert" (fixed relative to an external anchor), "reference" (real but
+    # irreducible — kept as a note, without a [REVIEW] flag).
     latest_time: str | None = None  # e.g. "07:00"
     business_days: int | None = None  # e.g. 1 for "1. WT"
     reference_step: int | None = None  # step number this deadline is relative to
     reference_event: str | None = None  # "ÜT" (Übertragungstag) or "ÜZ" (Übertragungszeitpunkt)
+    direction: Literal["vor", "nach"] | None = None  # WT count before/after the anchor
+    anchor: str | None = None  # external anchor when it is not a step ("Änderungstermin", "Zahlungsziel", …)
+    recurring: bool = False  # "täglich …" recurring obligation
     raw: str = ""  # original free-text deadline
 
 

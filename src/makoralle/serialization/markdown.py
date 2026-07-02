@@ -150,22 +150,33 @@ def _pid_table(sd: dict[str, Any]) -> list[str]:
 
 def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     """A short vocabulary legend for the deadline tags/notes rendered on the SD
-    image. Emitted only when at least one step carries a deadline that shows up
-    on the diagram (an inline tag for unverzüglich/parallel, or a [REVIEW] note
-    for complex)."""
+    image. Only the marker kinds actually present on this diagram are listed:
+    inline tags (unverzüglich/parallel/terminiert), an (i) reference note, and/or
+    a [REVIEW] note for a still-unstructured complex Frist."""
     steps = sd.get("steps", [])
-    shown = any((s.get("deadline_rule") or {}).get("type") in ("unverzüglich", "parallel", "complex") for s in steps)
-    if not shown:
+    types = {(s.get("deadline_rule") or {}).get("type") for s in steps}
+    has_tags = bool(types & {"unverzüglich", "parallel", "terminiert"})
+    has_reference = "reference" in types
+    has_complex = "complex" in types
+    if not (has_tags or has_reference or has_complex):
         return []
-    return [
-        "**Fristen (Legende der Diagramm-Markierungen):**",
-        "",
-        "- `{u}` — unverzüglich",
-        "- `{∥#N}` — parallel zu Schritt N",
-        "- `{≤HH:MM nWT ÜZ#N}` — spätestens HH:MM, n Werktage nach dem ÜZ/ÜT von Schritt N",
-        "- `(!) … [REVIEW]` (Notiz) — komplexe Frist, noch nicht strukturiert geparst",
-        "",
-    ]
+    lines = ["**Fristen (Legende der Diagramm-Markierungen):**", ""]
+    if has_tags:
+        lines += [
+            "- `{u}` — unverzüglich",
+            "- `{∥#N}` — parallel zu Schritt N",
+            "- `{≤HH:MM nWT ÜZ#N}` — spätestens HH:MM, n Werktage nach dem ÜZ/ÜT von Schritt N",
+            "- `{≤nWT vor|nach Anker}` — terminierte Frist, n Werktage vor/nach einem Termin "
+            "(z. B. Zahlungsziel, Änderungstermin)",
+        ]
+    if has_reference:
+        lines.append(
+            "- `(i) …` (Notiz) — Frist als Verweis auf eine Tabelle / ein SD / den Rahmenvertrag oder mit Bedingung"
+        )
+    if has_complex:
+        lines.append("- `(!) … [REVIEW]` (Notiz) — komplexe Frist, noch nicht strukturiert geparst")
+    lines.append("")
+    return lines
 
 
 def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disable=too-many-locals

@@ -1,5 +1,28 @@
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
-from makoralle.serialization.wsd import _deadline_tag, emit_wsd
+from makoralle.serialization.wsd import _deadline_note, _deadline_tag, emit_wsd
+
+
+def _step_with_deadline(rule: DeadlineRule) -> SDStep:
+    return SDStep(nr=1, sender="LF", receiver="NB", message="Foo", deadline_rule=rule)
+
+
+def test_deadline_note_complex_keeps_review_flag() -> None:
+    note = _deadline_note(_step_with_deadline(DeadlineRule(type="complex", raw="Gemäß irgendwas.")), ["LF", "NB"])
+    assert note == "note right of NB: (!) Frist: Gemäß irgendwas.  [REVIEW]"
+
+
+def test_deadline_note_reference_is_info_without_review_flag() -> None:
+    """A 'reference' deadline (real but irreducible) stays a note, but with an (i)
+    marker and NO [REVIEW] — so extract_review_notes never pulls it into review."""
+    note = _deadline_note(_step_with_deadline(DeadlineRule(type="reference", raw="Gemäß Rahmenvertrag.")), ["LF", "NB"])
+    assert note == "note right of NB: (i) Frist: Gemäß Rahmenvertrag."
+    assert "[REVIEW]" not in note
+
+
+def test_deadline_note_terminiert_and_structured_get_no_note() -> None:
+    """Structured deadlines (tag-rendered) never produce a note."""
+    for t in ("terminiert", "unverzüglich", "parallel", "none"):
+        assert _deadline_note(_step_with_deadline(DeadlineRule(type=t, raw="x")), ["LF", "NB"]) is None
 
 
 def test_emit_flat() -> None:
@@ -397,6 +420,28 @@ def test_deadline_tag_unverzueglich_with_clock_omits_null_pieces() -> None:
     assert _deadline_tag(DeadlineRule(type="unverzüglich", reference_step=5, raw="...")) == "{#5}"
     # business days only
     assert _deadline_tag(DeadlineRule(type="unverzüglich", business_days=3, raw="...")) == "{3WT}"
+
+
+def test_deadline_tag_terminiert_wt_before_external_anchor() -> None:
+    rule = DeadlineRule(
+        type="terminiert", direction="vor", business_days=20, reference_event="ÜT", anchor="Änderungstermin", raw="..."
+    )
+    assert _deadline_tag(rule) == "{≤20WT vor Änderungstermin}"
+
+
+def test_deadline_tag_terminiert_wt_after_reference_step() -> None:
+    rule = DeadlineRule(type="terminiert", direction="nach", business_days=11, reference_step=2, raw="...")
+    assert _deadline_tag(rule) == "{≤11WT nach #2}"
+
+
+def test_deadline_tag_terminiert_anchor_only() -> None:
+    rule = DeadlineRule(type="terminiert", anchor="Zahlungsziel", raw="Spätester ÜT ist zum angegebenen Zahlungsziel.")
+    assert _deadline_tag(rule) == "{≤Zahlungsziel}"
+
+
+def test_deadline_tag_terminiert_recurring_with_time() -> None:
+    rule = DeadlineRule(type="terminiert", recurring=True, latest_time="14:00", raw="Täglich … bis spätestens 14 Uhr.")
+    assert _deadline_tag(rule) == "{täglich ≤14:00}"
 
 
 def test_emit_appends_deadline_tag_after_pid_suffix() -> None:
