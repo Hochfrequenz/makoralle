@@ -12,7 +12,7 @@ pydantic-core==2.46.4
     # via pydantic
 pyyaml==6.0.3
     # via makoralle (pyproject.toml)
-typing-extensions==4.15.0
+typing-extensions==4.16.0
     # via
     #   pydantic
     #   pydantic-core
