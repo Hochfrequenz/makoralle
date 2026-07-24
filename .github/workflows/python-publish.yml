@@ -21,17 +21,32 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install tox
+      - name: Run the Unit Tests
         run: |
-          python -m pip install --upgrade pip
-          pip install tox
-      - name: Run tox
+          uv sync --group tests
+          uv run pytest
+      - name: Run Pylint
         run: |
-          tox
+          uv sync --group linting
+          uv run pylint makoralle
+          uv run pylint unittests --rcfile=unittests/.pylintrc
+      - name: Run Mypy
+        run: |
+          uv sync --group type_check
+          uv run mypy --show-error-codes src/makoralle --strict
+          uv run mypy --show-error-codes unittests --strict
+      - name: Run Coverage
+        run: |
+          uv sync --group coverage
+      - name: Record Coverage
+        working-directory: unittests
+        run: |
+          uv run coverage run -m pytest
+          uv run coverage report --fail-under 80 --omit .venv/*,unittests/*
 
   build-n-publish:
     name: Build and publish Python 🐍 distributions 📦 to PyPI and TestPyPI
@@ -49,17 +64,13 @@ jobs:
     needs: tests
     steps:
       - uses: actions/checkout@v7
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v7
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install .[packaging]
       - name: Build wheel and source distributions
         run: |
-          python -m build
+          uv build
       - name: Publish distribution 📦 to PyPI
         if: startsWith(github.ref, 'refs/tags/v')
         uses: pypa/gh-action-pypi-publish@release/v1
