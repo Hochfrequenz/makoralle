@@ -61,11 +61,13 @@ with [`uv`](https://docs.astral.sh/uv/). To set up a development environment:
 uv sync --group dev
 ```
 
-Run the unit tests, linting, type checks and coverage:
+Run the unit tests, linting, type checks and coverage (matching what CI runs):
 
 ```bash
 uv run --group tests pytest
 uv run --group linting pylint makoralle
+uv run --group linting pylint unittests --rcfile=unittests/.pylintrc
 uv run --group type_check mypy --strict src/makoralle
-uv run --group coverage coverage run -m pytest
+uv run --group type_check mypy --strict unittests
+cd unittests && uv run --group coverage coverage run -m pytest && cd ..
 ```
