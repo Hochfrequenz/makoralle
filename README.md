@@ -55,17 +55,19 @@ and the serializers under `makoralle.serialization`.
 ## Development
 
 This project uses the Hochfrequenz [`src`-layout Python template](https://github.com/Hochfrequenz/python_template_repository)
-with `tox`. To set up a development environment:
+with [`uv`](https://docs.astral.sh/uv/). To set up a development environment:
 
 ```bash
-tox -e dev
+uv sync --group dev
 ```
 
-Run the unit tests, linting, type checks and coverage:
+Run the unit tests, linting, type checks and coverage (matching what CI runs):
 
 ```bash
-tox -e tests
-tox -e linting
-tox -e type_check
-tox -e coverage
+uv run --group tests pytest
+uv run --group linting pylint makoralle
+uv run --group linting pylint unittests --rcfile=unittests/.pylintrc
+uv run --group type_check mypy --strict src/makoralle
+uv run --group type_check mypy --strict unittests
+cd unittests && uv run --group coverage coverage run -m pytest && cd ..
 ```
