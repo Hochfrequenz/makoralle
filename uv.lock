@@ -302,7 +302,6 @@ dev = [
     { name = "types-pyyaml" },
 ]
 linting = [
-    { name = "pytest" },
     { name = "ruff" },
 ]
 spell-check = [
@@ -337,10 +336,7 @@ dev = [
     { name = "ruff", specifier = "==0.16.0" },
     { name = "types-pyyaml", specifier = "==6.0.12.20260518" },
 ]
-linting = [
-    { name = "pytest", specifier = "==9.1.1" },
-    { name = "ruff", specifier = "==0.16.0" },
-]
+linting = [{ name = "ruff", specifier = "==0.16.0" }]
 spell-check = [{ name = "codespell", specifier = "==2.4.3" }]
 tests = [{ name = "pytest", specifier = "==9.1.1" }]
 type-check = [

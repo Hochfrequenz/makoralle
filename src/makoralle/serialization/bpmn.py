@@ -157,7 +157,7 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
     }
     for prefix, uri in ns.items():
         if prefix:
-            Element(f"_{prefix}").tag  # noqa: B018 -- register  # pylint: disable=expression-not-assigned
+            Element(f"_{prefix}").tag  # noqa: B018 -- register (intentional no-op)
             import xml.etree.ElementTree as ET  # pylint: disable=import-outside-toplevel
 
             ET.register_namespace(prefix, uri)
