@@ -141,7 +141,7 @@ def test_sd_table_escapes_pipe_and_newline_in_deadline() -> None:
     sd = {
         "steps": [{"nr": 1, "sender": "NB", "receiver": "LF", "message": "X", "deadline": "5 WT | spätestens\n07:00"}]
     }
-    row = next(l for l in _render_sd_table(sd) if l.strip().startswith("| 1 "))
+    row = next(line for line in _render_sd_table(sd) if line.strip().startswith("| 1 "))
     assert "\\|" in row  # literal pipe escaped
     assert "\n" not in row  # newline collapsed
     # the table structure stays a single 8-column row

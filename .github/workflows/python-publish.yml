@@ -29,11 +29,11 @@ jobs:
         run: |
           uv sync --group tests
           uv run pytest
-      - name: Run Pylint
+      - name: Run Ruff
         run: |
           uv sync --group linting
-          uv run pylint makoralle
-          uv run pylint unittests --rcfile=unittests/.pylintrc
+          uv run ruff check src/makoralle unittests
+          uv run ruff format --check .
       - name: Run Mypy
         run: |
           uv sync --group type_check

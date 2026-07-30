@@ -103,7 +103,7 @@ def _build_step_paths(fragments: list[SDFragment]) -> dict[int, list[tuple[SDFra
     def walk(frag_list: list[SDFragment], prefix: list[tuple[SDFragment, int]]) -> None:
         for frag in frag_list:
             for bi, branch in enumerate(frag.branches):
-                bpath = prefix + [(frag, bi)]
+                bpath = [*prefix, (frag, bi)]
                 for nr in branch.step_nrs:
                     paths[nr] = bpath
                 walk(branch.fragments, bpath)
@@ -227,7 +227,7 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
                 # branch, so intermediate empty branches keep their labels.
                 for k in range(bi + 1, target[i][1] + 1):
                     lines.append(_else_token(frag, k))
-                current = current[:i] + [target[i]]
+                current = [*current[:i], target[i]]
                 break
             # Closing an alt: render any trailing empty branches' labels before
             # the `end` so they are not silently dropped.
@@ -242,7 +242,7 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
         for j in range(len(current), len(target)):
             frag, bi = target[j]
             lines.extend(_open_lines(frag, bi))
-            current = current[:j] + [(frag, bi)]
+            current = [*current[:j], (frag, bi)]
 
         # Annotate the arrow with the EDIFACT format and/or its Prüfidentifikator(en).
         # pid_refs are linked in link_process from the Prüfidentifikatoren list.

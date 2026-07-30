@@ -134,7 +134,7 @@ class Process(BaseModel):
     source_documents: SourceDocuments | None = None
 
     @model_validator(mode="after")
-    def _primary_sd(self) -> "Process":
+    def _primary_sd(self) -> Process:
         if self.diagrams and self.sequence_diagram is None:
             d = self.diagrams[0]
             self.sequence_diagram = SequenceDiagram(

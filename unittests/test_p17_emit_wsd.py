@@ -364,7 +364,7 @@ def test_emit_ref_step_as_self_arrow_on_sender() -> None:
     lines = emit_wsd(sd).splitlines()
     # self-loop on the sender (NB), keeping the source "ref ..." label
     assert "NB->>NB: 11. ref Abrechnungsdaten Netznutzungsabrechnung" in lines
-    assert not any(l.startswith("NB->>LFA:") for l in lines)
+    assert not any(line.startswith("NB->>LFA:") for line in lines)
     # normal message still numbered
     assert "LF->>NB: 10. Anmeldung" in lines
 
@@ -466,7 +466,7 @@ def test_emit_appends_deadline_tag_after_pid_suffix() -> None:
             )
         ],
     )
-    line = next(l for l in emit_wsd(sd).splitlines() if l.startswith("NB->>LF: 5."))
+    line = next(ln for ln in emit_wsd(sd).splitlines() if ln.startswith("NB->>LF: 5."))
     assert line == "NB->>LF: 5. Zuordnung (UTILMD 55001) {≤07:00 1WT ÜZ#5}"
 
 

@@ -11,8 +11,9 @@ import hashlib
 import json
 import re
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import yaml
 
@@ -230,7 +231,7 @@ def extract_sd_overlay(  # pylint: disable=too-many-locals,too-many-branches,inv
     # make the second overlay element swallow the first's pointer events.)
     pids: list[dict[str, Any]] = []
     refs: list[dict[str, Any]] = []
-    refLinks: list[dict[str, Any]] = []
+    ref_links: list[dict[str, Any]] = []
     for tag in re.findall(r'<rect class="[^"]*\b(?:pid-hit|dl-ref|ref-hit)\b[^"]*"[^>]*>', html_text):
         cls = _attr(tag, "class") or ""
         box = {
@@ -262,7 +263,7 @@ def extract_sd_overlay(  # pylint: disable=too-many-locals,too-many-branches,inv
             if nr is not None and nr.isdigit():
                 uc = _attr(tag, "data-ref-uc")
                 sd = _attr(tag, "data-ref-sd")
-                refLinks.append({"nr": int(nr), "uc": uc or "", "sd": sd or "", **box})
+                ref_links.append({"nr": int(nr), "uc": uc or "", "sd": sd or "", **box})
 
     deadlines: dict[str, Any] = {}
     dm = re.search(r'<script[^>]*id="deadline-data"[^>]*>(.*?)</script>', html_text, re.S)
@@ -272,7 +273,7 @@ def extract_sd_overlay(  # pylint: disable=too-many-locals,too-many-branches,inv
         except ValueError:
             deadlines = {}
 
-    if not pids and not refs and not deadlines and not refLinks:
+    if not pids and not refs and not deadlines and not ref_links:
         return None
 
     ahb = re.search(r'const PRE = "([^"]*)"', html_text)
@@ -283,7 +284,7 @@ def extract_sd_overlay(  # pylint: disable=too-many-locals,too-many-branches,inv
         "pids": pids,
         "refs": refs,
         "deadlines": deadlines,
-        "refLinks": refLinks,
+        "refLinks": ref_links,
     }
 
 
@@ -431,7 +432,7 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     # Worklist: distinct subprocess refs that resolved to no target. Curate these
     # in sd_ref_links.yaml (ambiguous / garbled scenario-bundle refs).
     if unresolved_refs:
-        print(f"unresolved refs: {len(unresolved_refs)} " f"(add to sd_ref_links.yaml):")
+        print(f"unresolved refs: {len(unresolved_refs)} (add to sd_ref_links.yaml):")
         for ref in sorted(unresolved_refs):
             print(f"  - {ref}")
     return len(index)

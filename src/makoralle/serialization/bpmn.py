@@ -157,7 +157,7 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
     }
     for prefix, uri in ns.items():
         if prefix:
-            Element(f"_{prefix}").tag  # register  # pylint: disable=expression-not-assigned
+            Element(f"_{prefix}").tag  # noqa: B018 -- register  # pylint: disable=expression-not-assigned
             import xml.etree.ElementTree as ET  # pylint: disable=import-outside-toplevel
 
             ET.register_namespace(prefix, uri)
@@ -354,7 +354,7 @@ def _generate_diagram(  # pylint: disable=too-many-locals,too-many-branches,too-
     # Build adjacency for topological sort
     outgoing: dict[str, list[str]] = {}  # node_id -> [target_ids]
     incoming: dict[str, list[str]] = {}  # node_id -> [source_ids]
-    for sf_id, src, tgt in seq_flows:
+    for _sf_id, src, tgt in seq_flows:
         outgoing.setdefault(src, []).append(tgt)
         incoming.setdefault(tgt, []).append(src)
 
