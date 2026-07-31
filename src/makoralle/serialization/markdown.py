@@ -325,7 +325,7 @@ def yaml_to_markdown(  # pylint: disable=too-many-locals,too-many-branches,too-m
                 f"(../../sequence/{process_id}.html)"
             )
             lines.append("")
-            lines.append(f"[Open interactive sequence diagram](../../sequence/{process_id}.html)" "{ .md-button }")
+            lines.append(f"[Open interactive sequence diagram](../../sequence/{process_id}.html){{ .md-button }}")
             lines.append("")
         else:
             lines.extend(_render_sequence_diagram(sd))  # Mermaid fallback
@@ -385,7 +385,7 @@ def yaml_to_markdown(  # pylint: disable=too-many-locals,too-many-branches,too-m
         lines.append("## Activity Diagram")
         lines.append("")
         lines.append(
-            f"[Open BPMN Viewer (interactive)](../../bpmn/{process_id}.html)" "{ .md-button .md-button--primary }"
+            f"[Open BPMN Viewer (interactive)](../../bpmn/{process_id}.html){{ .md-button .md-button--primary }}"
         )
         lines.append("")
 

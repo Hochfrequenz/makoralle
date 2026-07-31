@@ -38,7 +38,7 @@ def _normalize_for_matching(text: str) -> str:
 
 def uc_process_id(uc_heading: str) -> str:
     """Derive the canonical process id (slug) from a ``… UC: …`` section heading."""
-    return _slug(uc_heading.split("UC:")[-1])
+    return _slug(uc_heading.rsplit("UC:", maxsplit=1)[-1])
 
 
 def sd_slug_and_name(sd_heading: str, uc_name: str | None) -> tuple[str, str | None]:
@@ -50,7 +50,7 @@ def sd_slug_and_name(sd_heading: str, uc_name: str | None) -> tuple[str, str | N
     When the SD's full name equals the UC name (a single-SD UC), there is no
     qualifier so ``name`` is ``None``.
     """
-    full = sd_heading.split("SD:")[-1].strip()
+    full = sd_heading.rsplit("SD:", maxsplit=1)[-1].strip()
     name: str | None = full
     if uc_name:
         p = uc_name.strip()
