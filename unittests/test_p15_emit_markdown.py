@@ -88,9 +88,9 @@ def test_pid_table_links_each_pid_to_ahb() -> None:
         allow_unicode=True,
     )
     md = yaml_to_markdown(content, has_sequence=True)
-    assert "https://ahb-tabellen.hochfrequenz.de/ahb/FV2604/17115" in md
-    assert "[19116](https://ahb-tabellen.hochfrequenz.de/ahb/FV2604/19116)" in md
-    assert "[19117](https://ahb-tabellen.hochfrequenz.de/ahb/FV2604/19117)" in md
+    assert "https://ahb-tabellen.hochfrequenz.de/ahb/current/17115" in md
+    assert "[19116](https://ahb-tabellen.hochfrequenz.de/ahb/current/19116)" in md
+    assert "[19117](https://ahb-tabellen.hochfrequenz.de/ahb/current/19117)" in md
     assert "Prüfidentifikator" in md  # table present
 
 
