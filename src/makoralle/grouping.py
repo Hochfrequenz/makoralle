@@ -68,6 +68,19 @@ def sd_artifact_key(uc_id: str, slug: str, n_sds: int) -> str:
     return uc_id if n_sds <= 1 else f"{uc_id}__{slug}"
 
 
+def ad_artifact_key(uc_id: str, slug: str, n_sds: int) -> str:
+    """Artifact filename key for an activity diagram (``output/bpmn/``).
+
+    Same shape as :func:`sd_artifact_key` but with a SINGLE underscore, because
+    p11 names the activity diagrams after the document's own AD headings:
+    ``bestellung_zur_stammdatenänderung_an_lf_verantwortlich`` next to the SD's
+    ``bestellung_zur_stammdatenänderung__an_lf_verantwortlich``. Getting this
+    separator wrong silently strands every variant's diagram, so it is spelled out
+    here rather than inlined at the call site.
+    """
+    return uc_id if n_sds <= 1 else f"{uc_id}_{slug}"
+
+
 def _parent(section_id: str) -> str:
     return section_id.rsplit(".", 1)[0] if "." in section_id else section_id
 
