@@ -363,9 +363,9 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
                         unresolved_refs.add(ref)
         keys = [sd_artifact_key(pid, d.get("slug", ""), len(diagrams)) for d in diagrams]
         # Activity diagrams are keyed per SD variant ({pid}_{slug}), with the bare
-        # {pid} as fallback — checking only the bare name left 45 rendered diagrams
-        # unreachable. Record which artifacts got claimed so the leftovers can be
-        # listed (and still shipped) below.
+        # {pid} as fallback — checking only the bare name leaves every variant's
+        # diagram unreachable. Record which artifacts got claimed so the leftovers
+        # can be listed (and still shipped) below.
         ad_keys = [ad_artifact_key(pid, d.get("slug", ""), len(diagrams)) for d in diagrams]
         ad_for_slug: list[str | None] = []
         for ad_key in ad_keys:
@@ -378,7 +378,7 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
         # dropped it — the exact silent-drop this change exists to remove.
         bare_only = not diagrams and (bpmn_svg / f"{pid}.svg").exists()
         if bare_only:
-            claimed_ads.setdefault(f"{pid}", pid)
+            claimed_ads.setdefault(pid, pid)
         has_bpmn = any(ad_for_slug) or bare_only
         has_seq = any((seq_svg / f"{key}.svg").exists() for key in keys)
         # [REVIEW] notes ("Prüfung nötig" worklist) can live in ANY SD's .wsd;
@@ -445,9 +445,9 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
         if (seq_svg / f"{pid}.svg").exists():
             shutil.copyfile(seq_svg / f"{pid}.svg", dest_seq / f"{pid}.svg")
 
-    # Copy EVERY rendered activity diagram, not just the ones a process page links.
-    # 115 of 173 used to be dropped here without a word; the ones that resolve to no
-    # process/variant stay reachable through activity_diagrams.json (browse view).
+    # Copy EVERY rendered activity diagram, not just the ones a process page links:
+    # anything unlinked used to be dropped here without a word. The ones that resolve
+    # to no process/variant stay reachable through activity_diagrams.json (browse view).
     all_ads = sorted(p.stem for p in bpmn_svg.glob("*.svg")) if bpmn_svg.exists() else []
     for ad_key in all_ads:
         shutil.copyfile(bpmn_svg / f"{ad_key}.svg", dest_bpmn / f"{ad_key}.svg")

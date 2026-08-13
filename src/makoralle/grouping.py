@@ -75,7 +75,8 @@ def ad_artifact_key(uc_id: str, slug: str, n_sds: int) -> str:
     p11 names the activity diagrams after the document's own AD headings:
     ``bestellung_zur_stammdatenänderung_an_lf_verantwortlich`` next to the SD's
     ``bestellung_zur_stammdatenänderung__an_lf_verantwortlich``. Getting this
-    separator wrong is why 45 rendered activity diagrams never reached the app.
+    separator wrong silently strands every variant's diagram, so it is spelled out
+    here rather than inlined at the call site.
     """
     return uc_id if n_sds <= 1 else f"{uc_id}_{slug}"
 

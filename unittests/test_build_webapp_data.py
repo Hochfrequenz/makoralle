@@ -750,7 +750,7 @@ def test_run_reports_orphaned_approval_entries(tmp_path: pathlib.Path, capsys: A
 
 def test_ad_artifact_key_uses_a_single_underscore() -> None:
     """p11 names activity diagrams `{pid}_{slug}` where the SDs use `{pid}__{slug}`.
-    Conflating the two is what stranded 45 rendered diagrams."""
+    Conflating the two strands every variant's diagram."""
     assert ad_artifact_key("wechsel", "lieferant", 1) == "wechsel"
     assert ad_artifact_key("wechsel", "lieferant", 3) == "wechsel_lieferant"
     assert ad_artifact_key("wechsel", "lieferant", 3) != sd_artifact_key("wechsel", "lieferant", 3)
