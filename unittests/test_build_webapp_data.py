@@ -4,6 +4,7 @@ from typing import Any
 
 import yaml
 
+from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.webapp_export import (
     build_detail,
     build_index_entry,
@@ -745,3 +746,79 @@ def test_run_reports_orphaned_approval_entries(tmp_path: pathlib.Path, capsys: A
 
     out_text = capsys.readouterr().out
     assert "orphaned" in out_text and "ghost__variant" in out_text
+
+
+def test_ad_artifact_key_uses_a_single_underscore() -> None:
+    """p11 names activity diagrams `{pid}_{slug}` where the SDs use `{pid}__{slug}`.
+    Conflating the two is what stranded 45 rendered diagrams."""
+    assert ad_artifact_key("wechsel", "lieferant", 1) == "wechsel"
+    assert ad_artifact_key("wechsel", "lieferant", 3) == "wechsel_lieferant"
+    assert ad_artifact_key("wechsel", "lieferant", 3) != sd_artifact_key("wechsel", "lieferant", 3)
+
+
+def test_run_links_per_variant_activity_diagrams(tmp_path: pathlib.Path) -> None:
+    """A multi-SD process's activity diagrams live at {pid}_{slug}; each variant gets
+    its own, and a variant without one gets None rather than a 404 link."""
+    out, web = tmp_path / "output", tmp_path / "webapp"
+    pid = "wechsel"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    # only the first variant has an activity diagram rendered
+    _write(out / "bpmn" / f"{pid}_lieferant.svg", "<svg>ad-lieferant</svg>")
+
+    run(output_dir=out, webapp_dir=web)
+
+    detail = json.loads((web / f"src/data/processes/{pid}.json").read_text("utf-8"))
+    by_slug = {d["slug"]: d["activitySvg"] for d in detail["diagrams"]}
+    assert by_slug["lieferant"] == f"/diagrams/bpmn/{pid}_lieferant.svg"
+    assert by_slug["netzbetreiber"] is None
+    assert json.loads((web / "src/data/processes.json").read_text("utf-8"))[0]["hasBpmn"] is True
+    assert (web / f"public/diagrams/bpmn/{pid}_lieferant.svg").exists()
+
+
+def test_run_falls_back_to_the_bare_pid_activity_diagram(tmp_path: pathlib.Path) -> None:
+    """A multi-SD process whose activity diagram is named after the process only
+    (no variant suffix) still resolves — every variant points at it."""
+    out, web = tmp_path / "output", tmp_path / "webapp"
+    pid = "wechsel"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    _write(out / "bpmn" / f"{pid}.svg", "<svg>ad</svg>")
+
+    run(output_dir=out, webapp_dir=web)
+
+    detail = json.loads((web / f"src/data/processes/{pid}.json").read_text("utf-8"))
+    assert {d["activitySvg"] for d in detail["diagrams"]} == {f"/diagrams/bpmn/{pid}.svg"}
+
+
+def test_run_ships_and_indexes_activity_diagrams_that_link_to_no_process(tmp_path: pathlib.Path) -> None:
+    """Diagrams whose p11 name matches no process/variant (stale pre-de-truncation
+    names) must still be copied and indexed — they used to be dropped silently."""
+    out, web = tmp_path / "output", tmp_path / "webapp"
+    pid = "abstimmung_der_netzzeitreihe"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    _write(out / "bpmn" / f"{pid}.svg", "<svg>linked</svg>")
+    _write(out / "bpmn" / "zuordnung_eines_bilanzkreises_zur_aufnah-.svg", "<svg>orphan</svg>")
+
+    run(output_dir=out, webapp_dir=web)
+
+    ads = json.loads((web / "src/data/activity_diagrams.json").read_text("utf-8"))
+    by_name = {a["name"]: a for a in ads}
+    assert by_name[pid]["linked"] is True
+    orphan = by_name["zuordnung_eines_bilanzkreises_zur_aufnah-"]
+    assert orphan["linked"] is False
+    assert orphan["svg"] == "/diagrams/bpmn/zuordnung_eines_bilanzkreises_zur_aufnah-.svg"
+    # shipped despite linking to nothing, so the browse view can reach it
+    assert (web / "public/diagrams/bpmn/zuordnung_eines_bilanzkreises_zur_aufnah-.svg").exists()
+
+
+def test_run_rewrites_activity_diagram_dir_without_orphans(tmp_path: pathlib.Path) -> None:
+    """The dest dir is fully generated: a diagram removed upstream must not survive."""
+    out, web = tmp_path / "output", tmp_path / "webapp"
+    pid = "abstimmung_der_netzzeitreihe"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    _write(out / "bpmn" / f"{pid}.svg", "<svg>ad</svg>")
+    _write(web / "public/diagrams/bpmn/gone.svg", "<svg>stale</svg>")
+
+    run(output_dir=out, webapp_dir=web)
+
+    assert not (web / "public/diagrams/bpmn/gone.svg").exists()
+    assert (web / f"public/diagrams/bpmn/{pid}.svg").exists()

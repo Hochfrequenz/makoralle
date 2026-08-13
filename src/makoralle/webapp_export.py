@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from makoralle.grouping import sd_artifact_key
+from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.ref_links import build_ref_map, load_ref_overrides, resolve_ref
 
 
@@ -142,6 +142,10 @@ def build_detail(process: dict[str, Any], *, review_notes: list[str]) -> dict[st
                 "deadlines": _deadline_table(d_steps),
                 "pids": _pid_table(d_steps),
                 "svg": f"/diagrams/sequence/{key}.svg",
+                # Activity-diagram path for THIS variant, or None. run() overwrites
+                # it with None when no such artifact was rendered — build_detail has
+                # no filesystem, so it can only state where the artifact would live.
+                "activitySvg": f"/diagrams/bpmn/{ad_artifact_key(pid, slug, n)}.svg",
             }
         )
     # Back-compat: the top-level steps/deadlines/pids/participants mirror the
@@ -314,6 +318,9 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     # Every current diagram artifact key we consult, so after the loop we can spot
     # approval ENTRIES that match no diagram at all (variant removed / slug renamed).
     consulted_keys: set[str] = set()
+    # Activity-diagram artifacts claimed by some process/variant. Whatever is left
+    # over is still copied and indexed, but is not reachable from a process page.
+    claimed_ads: set[str] = set()
 
     # Load every process up front so the subprocess-ref resolver sees ALL SD
     # variants (a ref names another process's SD, which may sort later).
@@ -352,7 +359,18 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
                     if step["ref_target"] is None:
                         unresolved_refs.add(ref)
         keys = [sd_artifact_key(pid, d.get("slug", ""), len(diagrams)) for d in diagrams]
-        has_bpmn = (bpmn_svg / f"{pid}.svg").exists()
+        # Activity diagrams are keyed per SD variant ({pid}_{slug}), with the bare
+        # {pid} as fallback — checking only the bare name left 45 rendered diagrams
+        # unreachable. Record which artifacts got claimed so the leftovers can be
+        # listed (and still shipped) below.
+        ad_keys = [ad_artifact_key(pid, d.get("slug", ""), len(diagrams)) for d in diagrams]
+        ad_for_slug: list[str | None] = []
+        for ad_key in ad_keys:
+            found = next((k for k in (ad_key, pid) if (bpmn_svg / f"{k}.svg").exists()), None)
+            ad_for_slug.append(found)
+            if found:
+                claimed_ads.add(found)
+        has_bpmn = any(ad_for_slug)
         has_seq = any((seq_svg / f"{key}.svg").exists() for key in keys)
         # [REVIEW] notes ("Prüfung nötig" worklist) can live in ANY SD's .wsd;
         # aggregate across all, de-duplicating while preserving order.
@@ -393,6 +411,10 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
             d_svg = seq_svg / f"{key}.svg"
             if d_svg.exists():
                 shutil.copyfile(d_svg, dest_seq / f"{key}.svg")
+        # Point each diagram at the activity artifact that actually exists (None
+        # when this variant has none), so the app never links a 404.
+        for diagram, resolved_ad in zip(detail["diagrams"], ad_for_slug, strict=True):
+            diagram["activitySvg"] = f"/diagrams/bpmn/{resolved_ad}.svg" if resolved_ad else None
         # detail.approval = the PRIMARY diagram's approval (back-compat; single-SD
         # key == pid so this equals the old {pid}.wsd result).
         detail["approval"] = detail["diagrams"][0]["approval"] if detail["diagrams"] else None
@@ -413,8 +435,25 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
         # on the file itself, not has_seq (multi-SD has only {pid}__{slug}.svg).
         if (seq_svg / f"{pid}.svg").exists():
             shutil.copyfile(seq_svg / f"{pid}.svg", dest_seq / f"{pid}.svg")
-        if has_bpmn:
-            shutil.copyfile(bpmn_svg / f"{pid}.svg", dest_bpmn / f"{pid}.svg")
+
+    # Copy EVERY rendered activity diagram, not just the ones a process page links.
+    # 115 of 173 used to be dropped here without a word; the ones that resolve to no
+    # process/variant stay reachable through activity_diagrams.json (browse view).
+    all_ads = sorted(p.stem for p in bpmn_svg.glob("*.svg")) if bpmn_svg.exists() else []
+    for ad_key in all_ads:
+        shutil.copyfile(bpmn_svg / f"{ad_key}.svg", dest_bpmn / f"{ad_key}.svg")
+    unclaimed = [k for k in all_ads if k not in claimed_ads]
+    (data_dir / "activity_diagrams.json").write_text(
+        json.dumps(
+            [{"name": k, "svg": f"/diagrams/bpmn/{k}.svg", "linked": k in claimed_ads} for k in all_ads],
+            ensure_ascii=False,
+            indent=2,
+        ),
+        "utf-8",
+    )
+    print(
+        f"activity diagrams: {len(all_ads)} copied, {len(claimed_ads)} linked to a process, {len(unclaimed)} unlinked"
+    )
 
     index.sort(key=lambda e: (e["category"], e["name"].lower()))
     (data_dir / "processes.json").write_text(json.dumps(index, ensure_ascii=False, indent=2), "utf-8")
@@ -431,6 +470,13 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     print(f"approved: {approved_count}/{len(index)}{note}")
     # Worklist: distinct subprocess refs that resolved to no target. Curate these
     # in sd_ref_links.yaml (ambiguous / garbled scenario-bundle refs).
+    # Worklist: rendered activity diagrams that resolve to no process/variant —
+    # mostly p11 names predating the UC de-truncation (see the dataset's
+    # REGENERATION.md). They ship, but only the browse view reaches them.
+    if unclaimed:
+        print(f"unlinked activity diagrams: {len(unclaimed)}")
+        for ad_key in unclaimed:
+            print(f"  - {ad_key}")
     if unresolved_refs:
         print(f"unresolved refs: {len(unresolved_refs)} (add to sd_ref_links.yaml):")
         for ref in sorted(unresolved_refs):
