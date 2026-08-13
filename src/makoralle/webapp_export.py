@@ -142,10 +142,10 @@ def build_detail(process: dict[str, Any], *, review_notes: list[str]) -> dict[st
                 "deadlines": _deadline_table(d_steps),
                 "pids": _pid_table(d_steps),
                 "svg": f"/diagrams/sequence/{key}.svg",
-                # Activity-diagram path for THIS variant, or None. run() overwrites
-                # it with None when no such artifact was rendered — build_detail has
-                # no filesystem, so it can only state where the artifact would live.
-                "activitySvg": f"/diagrams/bpmn/{ad_artifact_key(pid, slug, n)}.svg",
+                # Attached by run(), which can see which artifact actually exists;
+                # build_detail has no filesystem, so it emits None rather than a
+                # path that may 404 (same contract as `approval` below).
+                "activitySvg": None,
             }
         )
     # Back-compat: the top-level steps/deadlines/pids/participants mirror the
@@ -318,9 +318,12 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     # Every current diagram artifact key we consult, so after the loop we can spot
     # approval ENTRIES that match no diagram at all (variant removed / slug renamed).
     consulted_keys: set[str] = set()
-    # Activity-diagram artifacts claimed by some process/variant. Whatever is left
-    # over is still copied and indexed, but is not reachable from a process page.
-    claimed_ads: set[str] = set()
+    # Activity-diagram artifact -> the process that claims it. Whatever is left over
+    # is still copied and indexed, but is not reachable from a process page. Two
+    # processes claiming one artifact means p11's naming is ambiguous (a bare id that
+    # looks like another process's {pid}_{slug}), so record it rather than absorb it.
+    claimed_ads: dict[str, str] = {}
+    contested_ads: list[str] = []
 
     # Load every process up front so the subprocess-ref resolver sees ALL SD
     # variants (a ref names another process's SD, which may sort later).
@@ -368,9 +371,15 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
         for ad_key in ad_keys:
             found = next((k for k in (ad_key, pid) if (bpmn_svg / f"{k}.svg").exists()), None)
             ad_for_slug.append(found)
-            if found:
-                claimed_ads.add(found)
-        has_bpmn = any(ad_for_slug)
+            if found and claimed_ads.setdefault(found, pid) != pid:
+                contested_ads.append(f"{found} (claimed by {claimed_ads[found]} and {pid})")
+        # A process with no sequence diagram at all still gets its bare activity
+        # diagram: p11 renders ADs independently of SDs, and `any([])` would have
+        # dropped it — the exact silent-drop this change exists to remove.
+        bare_only = not diagrams and (bpmn_svg / f"{pid}.svg").exists()
+        if bare_only:
+            claimed_ads.setdefault(f"{pid}", pid)
+        has_bpmn = any(ad_for_slug) or bare_only
         has_seq = any((seq_svg / f"{key}.svg").exists() for key in keys)
         # [REVIEW] notes ("Prüfung nötig" worklist) can live in ANY SD's .wsd;
         # aggregate across all, de-duplicating while preserving order.
@@ -454,6 +463,13 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     print(
         f"activity diagrams: {len(all_ads)} copied, {len(claimed_ads)} linked to a process, {len(unclaimed)} unlinked"
     )
+    # One artifact wanted by two processes: p11's {pid}_{slug} is indistinguishable
+    # from a bare id that ends in that slug. First claim wins (processes are walked in
+    # sorted order, so it is at least deterministic), but say so rather than hide it.
+    if contested_ads:
+        print(f"ambiguous activity-diagram names: {len(contested_ads)}")
+        for contested in contested_ads:
+            print(f"  - {contested}")
 
     index.sort(key=lambda e: (e["category"], e["name"].lower()))
     (data_dir / "processes.json").write_text(json.dumps(index, ensure_ascii=False, indent=2), "utf-8")

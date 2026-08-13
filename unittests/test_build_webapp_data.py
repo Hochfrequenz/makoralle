@@ -822,3 +822,63 @@ def test_run_rewrites_activity_diagram_dir_without_orphans(tmp_path: pathlib.Pat
 
     assert not (web / "public/diagrams/bpmn/gone.svg").exists()
     assert (web / f"public/diagrams/bpmn/{pid}.svg").exists()
+
+
+NO_SD: dict[str, Any] = {
+    "process": {"id": "nur_ad", "name": "Nur AD", "category": "GPKE", "source": ""},
+    "use_case": {"roles": []},
+}
+
+
+def test_run_links_the_activity_diagram_of_a_process_without_any_sequence_diagram(
+    tmp_path: pathlib.Path,
+) -> None:
+    """p11 renders activity diagrams independently of p06's sequence diagrams, so a
+    process can have an AD and no SD. Resolving per variant must not drop it."""
+    out, web = tmp_path / "output", tmp_path / "webapp"
+    _write(out / "yaml" / "nur_ad.yaml", yaml.safe_dump(NO_SD, allow_unicode=True))
+    _write(out / "bpmn" / "nur_ad.svg", "<svg>ad</svg>")
+
+    run(output_dir=out, webapp_dir=web)
+
+    entry = json.loads((web / "src/data/processes.json").read_text("utf-8"))[0]
+    assert entry["sdCount"] == 0
+    assert entry["hasBpmn"] is True
+    ads = json.loads((web / "src/data/activity_diagrams.json").read_text("utf-8"))
+    assert [a["linked"] for a in ads if a["name"] == "nur_ad"] == [True]
+
+
+def test_run_reports_an_activity_diagram_two_processes_could_claim(tmp_path: pathlib.Path, capsys: Any) -> None:
+    """`{pid}_{slug}` is ambiguous with a bare id that happens to contain the slug:
+    `wechsel` + variant `lieferant` and a process named `wechsel_lieferant` both want
+    wechsel_lieferant.svg. Report it instead of silently handing it to whoever sorts first."""
+    out, web = tmp_path / "output", tmp_path / "webapp"
+    _write(out / "yaml" / "wechsel.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    collider = {
+        "process": {"id": "wechsel_lieferant", "name": "Wechsel Lieferant", "category": "GPKE", "source": ""},
+        "use_case": {"roles": []},
+        "sequence_diagram": {"participants": [], "steps": []},
+    }
+    _write(out / "yaml" / "wechsel_lieferant.yaml", yaml.safe_dump(collider, allow_unicode=True))
+    _write(out / "bpmn" / "wechsel_lieferant.svg", "<svg>contested</svg>")
+
+    run(output_dir=out, webapp_dir=web)
+
+    printed = capsys.readouterr().out
+    assert "ambiguous activity-diagram names: 1" in printed
+    assert "wechsel_lieferant (claimed by" in printed
+
+
+def test_run_prints_the_unlinked_activity_diagrams_as_a_worklist(tmp_path: pathlib.Path, capsys: Any) -> None:
+    out, web = tmp_path / "output", tmp_path / "webapp"
+    pid = "abstimmung_der_netzzeitreihe"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    _write(out / "bpmn" / f"{pid}.svg", "<svg>linked</svg>")
+    _write(out / "bpmn" / "zuordnung_eines_bilanzkreises_zur_aufnah-.svg", "<svg>orphan</svg>")
+
+    run(output_dir=out, webapp_dir=web)
+
+    printed = capsys.readouterr().out
+    assert "173 copied" not in printed  # sanity: this fixture has 2, not the real dataset
+    assert "2 copied, 1 linked to a process, 1 unlinked" in printed
+    assert "  - zuordnung_eines_bilanzkreises_zur_aufnah-" in printed
