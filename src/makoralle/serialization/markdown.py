@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from makoralle.config import AHB_PID_URL
+from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
 
 
 def _escape_mermaid(text: str) -> str:
@@ -37,6 +38,75 @@ def _wrap_text(text: str, max_len: int = 80) -> str:
     return "<br/>".join(lines)
 
 
+#: mermaid class per outcome kind. The kinds come from `ebd_clusters`, i.e. from the
+#: EBD PDF's own `Cluster:` prefix — the only authority on what an answer code means.
+_OUTCOME_CLASS = {"rejection": "reject", "approval": "accept", "info": "info", "unknown": "unknown"}
+
+
+def _outcome_cluster(cluster: str | None, hint: str | None) -> str | None:
+    """The branch's cluster: the resolved field, else the `Cluster:` prefix of its hint.
+
+    p09 does not always lift the prefix into `if_*_cluster` — in the committed EBD data
+    only 91 branches have the field while **1110** carry the prefix in the hint alone.
+    """
+    if cluster and cluster.strip():
+        return cluster.strip()
+    extracted, _ = extract_cluster(hint)
+    return extracted
+
+
+def _outcome_kind(cluster: str | None, result: str | None) -> str:
+    """Classify a branch's outcome: `rejection`, `approval`, `info` or `unknown`.
+
+    Only the cluster classifies (see :func:`_outcome_cluster`); `result` is accepted as
+    an argument so callers cannot mistake it for one. Without a cluster the answer is
+    `unknown` — grey — never an approval and never a rejection.
+
+    That split is not a judgement call, it is measured against
+    Hochfrequenz/machine-readable_entscheidungsbaumdiagramme, where every EBD is verified
+    from an independent source (ebdamame + rebdhuhn). Over the 1437 answer codes shared
+    with that repo (FV2604 and FV2610 agree):
+
+    ==========================================  ==============
+    rule                                        agreement
+    ==========================================  ==============
+    the result text, by substring ("ablehnung")  822/1407 58.4 %
+    cluster, falling back to the result text    1030/1407 73.2 %
+    **cluster only, else unknown**             1304/1407 92.7 %
+    ==========================================  ==============
+
+    The fallback is what costs the 19 points: the result text carries the same constant
+    for every code of an EBD, so it invents a rejection for 372 codes the verified data
+    classifies as unknown. Per kind, the current rule classifies every verified approval
+    (92/92) and every verified rejection (822/822) exactly; the residue is 98 codes where
+    this pipeline has a cluster the verified corpus does not, plus 5 info/unknown
+    crossings.
+    """
+    del result  # deliberately unused: it does not classify anything
+    if cluster and cluster.strip():
+        return cluster_to_kind(cluster.strip())
+    return "unknown"
+
+
+def _outcome_class(cluster: str | None, result: str | None) -> str:
+    """The mermaid class for a branch's outcome — see :func:`_outcome_kind`."""
+    return _OUTCOME_CLASS[_outcome_kind(cluster, result)]
+
+
+def _outcome_label(code: str, cluster: str | None, result: str | None) -> str:
+    """`A01: Zustimmung` — the code plus whatever names the outcome, or the bare code.
+
+    The cluster names it first, so a branch the EBD did classify does not degrade to a
+    bare answer code. The result text is still allowed to *name* an outcome even though
+    it may not *classify* one (see :func:`_outcome_kind`): a possibly-stale name is
+    better than none, whereas a wrong colour asserts something the source did not say.
+    """
+    for value in (cluster, result):
+        if value and value.strip():
+            return f"{code}: {value.strip()}"
+    return code
+
+
 def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
     """Render an EBD decision tree as a Mermaid flowchart with full text."""
     steps = dt.get("steps", [])
@@ -46,6 +116,11 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
     lines = ["```mermaid", "flowchart TD"]
     lines.append("    classDef reject fill:#ffcccc,stroke:#cc0000")
     lines.append("    classDef accept fill:#ccffcc,stroke:#00cc00")
+    # `info` and `unknown` exist so that an outcome which is neither an approval nor a
+    # rejection is not painted as one. `unknown` in particular is what an outcome the
+    # source did not classify looks like: grey, not green.
+    lines.append("    classDef info fill:#e8eefc,stroke:#5b7fbd")
+    lines.append("    classDef unknown fill:#eeeeee,stroke:#999999")
     lines.append("")
 
     for step in steps:
@@ -59,12 +134,10 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
         elif step.get("if_yes_code"):
             code = step["if_yes_code"]
             result = step.get("if_yes_result", "")
-            label = f"{code}: {result}" if result else code
+            cluster = _outcome_cluster(step.get("if_yes_cluster"), step.get("if_yes_hint"))
+            label = _outcome_label(code, cluster, result)
             lines.append(f'    s{nr} -->|ja| ry{nr}["{_escape_mermaid(label)}"]')
-            if result and "ablehnung" in result.lower():
-                lines.append(f"    ry{nr}:::reject")
-            else:
-                lines.append(f"    ry{nr}:::accept")
+            lines.append(f"    ry{nr}:::{_outcome_class(cluster, result)}")
 
         # No branch
         if step.get("if_no") and isinstance(step["if_no"], int):
@@ -72,12 +145,10 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
         elif step.get("if_no_code"):
             code = step["if_no_code"]
             result = step.get("if_no_result", "")
-            label = f"{code}: {result}" if result else code
+            cluster = _outcome_cluster(step.get("if_no_cluster"), step.get("if_no_hint"))
+            label = _outcome_label(code, cluster, result)
             lines.append(f'    s{nr} -->|nein| rn{nr}["{_escape_mermaid(label)}"]')
-            if result and "ablehnung" in result.lower():
-                lines.append(f"    rn{nr}:::reject")
-            else:
-                lines.append(f"    rn{nr}:::accept")
+            lines.append(f"    rn{nr}:::{_outcome_class(cluster, result)}")
 
     lines.append("```")
     return lines
