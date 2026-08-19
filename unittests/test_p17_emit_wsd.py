@@ -541,7 +541,7 @@ def test_emit_complex_deadline_note_on_ref_step_uses_sender_lifeline() -> None:
 # read against the source diagram yet — see makorele#96.
 #
 #   bestellung_einer_konfiguration_vom_nb_oder_lf_an_msb, step 10  MSB->>?
-#       WiM Teil 1 1.3.3.1. The diagram draws a "weiterer MSB" lane and Vision even read
+#       GPKE Teil 3, UC 1.3.3.1, diagram in 1.3.3.2 (pp. 47-48). It draws a "weiterer MSB" lane and Vision even read
 #       it into the participant list as "MSB (weiterer)" — only the arrow's endpoint was
 #       left unread.
 #   anforderung_von_zwischenablesungswerten, step 4               ?->>MSB
