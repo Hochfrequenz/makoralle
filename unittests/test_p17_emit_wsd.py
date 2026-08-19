@@ -533,6 +533,13 @@ def test_emit_complex_deadline_note_on_ref_step_uses_sender_lifeline() -> None:
 #
 # Both cases are real, from the dataset built off bnetza_bk6_mirror run 32251397627:
 #
+# The shipped corpus has 16 "?" endpoints: 11 on ``ref`` steps, where the other end never
+# named an actor, and 5 on real arrows, across three processes. Two of the five are read
+# below; the third process, reklamation_von_werten_beim_msb, carries the other three
+# (``?->>MSB: 3. Reklamation Wert einer Messlokation`` and ``?->>ÜNB: 3. Stornierung an
+# ÜNB`` in msb_der_messlokation_stellt_selbst_reklamationsbedarf_fest), which nobody has
+# read against the source diagram yet — see makorele#96.
+#
 #   bestellung_einer_konfiguration_vom_nb_oder_lf_an_msb, step 10  MSB->>?
 #       WiM Teil 1 1.3.3.1. The diagram draws a "weiterer MSB" lane and Vision even read
 #       it into the participant list as "MSB (weiterer)" — only the arrow's endpoint was
@@ -601,11 +608,13 @@ def test_a_step_with_two_known_endpoints_is_still_an_arrow() -> None:
     assert "LF->>NB: 1. Anmeldung" in emit_wsd(sd).splitlines()
 
 
-def test_a_step_with_neither_endpoint_known_is_dropped() -> None:
-    """There is no lifeline to anchor a note to, and picking one would file the step
-    under an actor it may have nothing to do with."""
+def test_a_step_with_neither_endpoint_known_spans_the_declared_lanes() -> None:
+    """Picking one lane would file the step under an actor it may have nothing to do
+    with, so the note spans them all. It is flagged like the one-sided case: this step is
+    worse off, not better, and the webapp lists it in the step table either way — a silent
+    drop would leave a step that appears in no diagram and on no worklist."""
     sd = SequenceDiagram(
-        participants=["NB"],
+        participants=["NB", "MSB"],
         steps=[
             SDStep(nr=1, sender="NB", receiver="NB", message="Bekannt"),
             SDStep(nr=2, sender="?", receiver="?", message="Beide Enden ungelesen"),
@@ -613,6 +622,17 @@ def test_a_step_with_neither_endpoint_known_is_dropped() -> None:
     )
     lines = emit_wsd(sd).splitlines()
     assert "NB->>NB: 1. Bekannt" in lines
+    assert "note over NB,MSB: (!) 2. Beide Enden ungelesen — Absender und Empfänger unbekannt  [REVIEW]" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_a_step_with_neither_endpoint_nor_any_lane_is_dropped() -> None:
+    """Nothing left to hang a note on — a diagram in which no actor was read at all."""
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=2, sender="?", receiver="?", message="Beide Enden ungelesen")],
+    )
+    lines = emit_wsd(sd).splitlines()
     assert not [line for line in lines if "Beide Enden ungelesen" in line]
     assert not [line for line in lines if "?" in line]
 
@@ -630,7 +650,8 @@ def test_the_placeholder_is_never_declared_as_a_participant() -> None:
 def test_a_ref_step_with_one_unread_endpoint_stays_a_self_arrow() -> None:
     """A ``ref`` is a subprocess box on one lifeline, so an unread *other* endpoint costs
     nothing — it never named a second actor. This is the majority of the "?" endpoints in
-    the corpus (all of reklamation_von_werten_beim_msb's, for instance)."""
+    the corpus: 11 of the 16, spread over the same three processes that carry the 5
+    non-ref ones."""
     sd = SequenceDiagram(
         participants=["MSB"],
         steps=[SDStep(nr=9, sender="MSB", receiver="?", message="ref Aufbereitung und Übermittlung von Werten")],

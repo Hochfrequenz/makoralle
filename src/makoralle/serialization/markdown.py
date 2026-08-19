@@ -8,6 +8,7 @@ import yaml
 
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
+from makoralle.serialization.wsd import is_known_actor
 
 
 def _escape_mermaid(text: str) -> str:
@@ -258,7 +259,10 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         return []
 
     lines = ["```mermaid", "sequenceDiagram"]
-    for p in participants:
+    # Same rule as emit_wsd: the "?" placeholder is not an actor, and naming it makes
+    # Mermaid draw a nameless lifeline beside the real ones (makorele#78).
+    known_lanes = [p for p in participants if is_known_actor(p)]
+    for p in known_lanes:
         lines.append(f"    participant {p}")
 
     for step in steps:
@@ -285,9 +289,23 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         # head distinction has no clean Mermaid equivalent, so it is not carried here.
         arrow = "-->>" if step.get("line") == "dashed" else "->>"
 
-        lines.append(f"    {sender}{arrow}+{receiver}: {label}")
-        if subprocess_ref and sender != receiver:
-            lines.append(f"    Note right of {receiver}: Subprocess call")
+        if is_known_actor(sender) and is_known_actor(receiver):
+            lines.append(f"    {sender}{arrow}+{receiver}: {label}")
+            if subprocess_ref and sender != receiver:
+                lines.append(f"    Note right of {receiver}: Subprocess call")
+        else:
+            # An endpoint the pipeline could not read: say the step and leave the other
+            # side open, rather than drawing an arrow to a lane that stands for
+            # "unknown". The .wsd rendering does the same, with a [REVIEW] flag the
+            # webapp's worklist picks up; this document has no such worklist, so the
+            # marker is plain text.
+            anchor = next((role for role in (sender, receiver) if is_known_actor(role)), None)
+            placement = f"Note over {anchor}" if anchor else f"Note over {','.join(known_lanes)}"
+            if anchor or known_lanes:
+                missing = "Empfänger" if is_known_actor(sender) else "Absender"
+                if not anchor:
+                    missing = "Absender und Empfänger"
+                lines.append(f"    {placement}: (!) {label} — {missing} unbekannt")
 
     lines.append("```")
     return lines

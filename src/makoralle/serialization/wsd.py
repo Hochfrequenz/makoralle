@@ -84,8 +84,8 @@ def _deadline_note(step: SDStep, participants: list[str]) -> str | None:
     if (step.message or "").strip().lower().startswith("ref "):
         who = _ref_lifeline(step, participants)
     else:
-        who = step.receiver if step.receiver and step.receiver != "?" else step.sender
-    if not who or who == "?":
+        who = step.receiver if is_known_actor(step.receiver) else step.sender
+    if not is_known_actor(who):
         return None
     text = _clean_note_text(dl.raw)
     # A "reference" deadline is real but irreducible (points to another table/SD/
@@ -160,7 +160,12 @@ _NOTE_PLACEMENT = {"over": "over", "left": "left of", "right": "right of", "left
 UNKNOWN_ENDPOINT = "?"
 
 
-def _is_known(role: str | None) -> bool:
+def is_known_actor(role: str | None) -> bool:
+    """True if ``role`` names an actor rather than standing in for one we could not read.
+
+    Public because every serializer needs the same rule — the Mermaid path in
+    :mod:`makoralle.serialization.markdown` draws a lifeline per participant too.
+    """
     return bool(role) and role != UNKNOWN_ENDPOINT
 
 
@@ -168,7 +173,9 @@ def _unknown_endpoint_note(step: SDStep, text: str) -> str | None:
     """The step rendered as a flagged note on the endpoint that *is* known, or None.
 
     Only for a step with exactly one unreadable endpoint, and never for a ``ref``, which
-    sits on one lifeline anyway and is handled by :func:`_ref_lifeline`.
+    sits on one lifeline anyway and is handled by :func:`_ref_lifeline`. The caller routes
+    refs away before asking, so that check is here to keep the function safe on its own
+    rather than to catch anything the caller lets through.
 
     A note rather than an arrow because an arrow needs two actors and only one is known:
     drawing it to a "?" lane asserts an actor the source does not have, and drawing it as
@@ -179,7 +186,7 @@ def _unknown_endpoint_note(step: SDStep, text: str) -> str | None:
     """
     if (step.message or "").strip().lower().startswith("ref "):
         return None
-    sender_known, receiver_known = _is_known(step.sender), _is_known(step.receiver)
+    sender_known, receiver_known = is_known_actor(step.sender), is_known_actor(step.receiver)
     if sender_known == receiver_known:  # both readable, or neither
         return None
     who = step.sender if sender_known else step.receiver
@@ -195,9 +202,9 @@ def _ref_lifeline(step: SDStep, participants: list[str]) -> str:
     step rather than drawing a "?" lifeline (makorele#78).
     """
     for cand in (step.sender, step.receiver):
-        if _is_known(cand):
+        if is_known_actor(cand):
             return cand
-    return next((p for p in participants if _is_known(p)), UNKNOWN_ENDPOINT)
+    return next((p for p in participants if is_known_actor(p)), UNKNOWN_ENDPOINT)
 
 
 def _emit_note(lines: list[str], note: SDNote) -> None:
@@ -207,7 +214,7 @@ def _emit_note(lines: list[str], note: SDNote) -> None:
     named: ``note over ?`` places the same phantom lane an arrow to "?" would (makorele#78).
     A note left with no anchor at all is skipped, as an anchorless one always was.
     """
-    anchors = [p for p in note.participants if _is_known(p)]
+    anchors = [p for p in note.participants if is_known_actor(p)]
     if not anchors:
         logger.debug("skipping note with no known participants: %r", note.text)
         return
@@ -241,9 +248,10 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
         # A "?" in the participant list would declare the very lane the notes below exist
         # to avoid; makorele's p08 writes it when a diagram yielded no readable actor at
         # all, and p12 leaves it in the note anchors it does not resolve (makorele#78).
-        if _is_known(p):
+        if is_known_actor(p):
             lines.append(f"participant {p}")
 
+    known_lanes = [p for p in sd.participants if is_known_actor(p)]
     paths = _build_step_paths(sd.fragments)
     notes_by_step: dict[int | None, list[SDNote]] = {}
     for note in sd.notes:
@@ -320,11 +328,13 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             # Vision often mis-guesses a different receiver for these (e.g. NB->LFA
             # for an NB self-reference), so loop on the sender's lifeline.
             lifeline = _ref_lifeline(step, sd.participants)
-            if _is_known(lifeline):
+            if is_known_actor(lifeline):
                 lines.append(f"{lifeline}{_arrow(step)}{lifeline}: {step.nr}. {msg}{suffix}")
             else:
                 # Both endpoints unread *and* no participant to fall back on: the
                 # self-arrow would be "?->>?", two phantom lanes for one step.
+                # (No spanning note either: _ref_lifeline falls back to the first known
+                # participant, so no lifeline here means the diagram declares no lane.)
                 logger.warning("dropping ref step %s from the diagram: no lifeline is known", step.nr)
         else:
             text = f"{step.nr}. {msg}{suffix}"
@@ -332,13 +342,22 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             if unknown:
                 logger.debug("step %s has an unreadable endpoint, rendering it as a note", step.nr)
                 lines.append(unknown)
-            elif _is_known(step.sender) and _is_known(step.receiver):
+            elif is_known_actor(step.sender) and is_known_actor(step.receiver):
                 lines.append(f"{step.sender}{_arrow(step)}{step.receiver}: {text}")
+            elif known_lanes:
+                # Neither endpoint is known. Anchoring on one lane would file the step
+                # under an actor it may have nothing to do with, so the note spans every
+                # declared lane: it says "this step is here and we could not place it"
+                # without naming a party. Flagged, because the step is worse off than the
+                # one-sided case above, not better — and it stays in the step table the
+                # webapp builds from the YAML either way, so a silent drop would leave a
+                # step listed that appears nowhere in the diagram and on no worklist.
+                lanes = ",".join(known_lanes)
+                body = _clean_note_text(text)
+                lines.append(f"note over {lanes}: (!) {body} — Absender und Empfänger unbekannt  [REVIEW]")
             else:
-                # Neither endpoint is known: there is no lifeline to anchor a note to, and
-                # inventing one would put the step under an actor it may have nothing to do
-                # with. The step stays in the YAML/JSON, which is where it can be repaired.
-                logger.warning("dropping step %s from the diagram: neither endpoint is known", step.nr)
+                # No lane at all to hang it on — a diagram in which nothing was read.
+                logger.warning("dropping step %s from the diagram: no endpoint and no lane is known", step.nr)
 
         dl_note = _deadline_note(step, sd.participants)
         if dl_note:

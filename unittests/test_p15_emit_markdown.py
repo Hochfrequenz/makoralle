@@ -3,6 +3,7 @@ import yaml
 from makoralle.serialization.markdown import (
     _deadline_legend,
     _render_sd_table,
+    _render_sequence_diagram,
     yaml_to_markdown,
 )
 
@@ -146,3 +147,61 @@ def test_sd_table_escapes_pipe_and_newline_in_deadline() -> None:
     assert "\n" not in row  # newline collapsed
     # the table structure stays a single 8-column row
     assert row.count(" | ") >= 1
+
+
+# --- an endpoint the pipeline could not read (makorele#78) -------------------------
+#
+# The Mermaid path draws a lifeline per participant just like the WSD one, so "?" makes
+# a nameless lane here too. Same rule, and the same two real steps behind it.
+
+
+def test_mermaid_renders_an_unread_endpoint_as_a_note() -> None:
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["NB", "MSB", "MSB (weiterer)"],
+            "steps": [
+                {"nr": 9, "sender": "MSB", "receiver": "NB", "message": "Antwort auf Bestellung"},
+                {"nr": 10, "sender": "MSB", "receiver": "?", "message": "Mitteilung über Gesamtvorgang"},
+            ],
+        }
+    )
+    assert "    MSB->>+NB: 9. Antwort auf Bestellung" in lines
+    assert "    Note over MSB: (!) 10. Mitteilung über Gesamtvorgang — Empfänger unbekannt" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_mermaid_names_the_receiver_when_the_sender_is_the_unread_one() -> None:
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["NB", "LF", "MSB"],
+            "steps": [{"nr": 4, "sender": "?", "receiver": "MSB", "message": "Anforderung Wert einer Messlokation"}],
+        }
+    )
+    assert "    Note over MSB: (!) 4. Anforderung Wert einer Messlokation — Absender unbekannt" in lines
+
+
+def test_mermaid_never_declares_the_placeholder_as_a_participant() -> None:
+    lines = _render_sequence_diagram(
+        {"participants": ["?", "NB"], "steps": [{"nr": 1, "sender": "NB", "receiver": "NB", "message": "A"}]}
+    )
+    assert "    participant NB" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_mermaid_spans_the_lanes_when_neither_endpoint_is_known() -> None:
+    lines = _render_sequence_diagram(
+        {"participants": ["NB", "MSB"], "steps": [{"nr": 2, "sender": "?", "receiver": "?", "message": "Unklar"}]}
+    )
+    assert "    Note over NB,MSB: (!) 2. Unklar — Absender und Empfänger unbekannt" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_mermaid_keeps_a_readable_step_unchanged() -> None:
+    """The boundary: nothing about a step with two known endpoints moves."""
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["LF", "NB"],
+            "steps": [{"nr": 1, "sender": "LF", "receiver": "NB", "message": "Anmeldung", "format": "UTILMD"}],
+        }
+    )
+    assert "    LF->>+NB: 1. Anmeldung [UTILMD]" in lines
