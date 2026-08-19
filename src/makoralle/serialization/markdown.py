@@ -7,6 +7,7 @@ from typing import Any
 import yaml
 
 from makoralle.config import AHB_PID_URL
+from makoralle.ebd_clusters import cluster_to_kind
 
 
 def _escape_mermaid(text: str) -> str:
@@ -37,6 +38,26 @@ def _wrap_text(text: str, max_len: int = 80) -> str:
     return "<br/>".join(lines)
 
 
+#: mermaid class per outcome kind. The kinds come from `ebd_clusters`, i.e. from the
+#: EBD PDF's own `Cluster:` prefix — the only authority on what an answer code means.
+_OUTCOME_CLASS = {"rejection": "reject", "approval": "accept", "info": "info", "unknown": "unknown"}
+
+
+def _outcome_class(result: str | None) -> str:
+    """The mermaid class for a branch's outcome text.
+
+    An absent result yields `unknown`, never `accept`: this used to fall through to the
+    approval styling, so an outcome nobody classified was drawn green (77 such nodes in
+    the shipped dataset, and a regeneration that empties more result fields turns
+    rejections green wholesale — makoralle#29, makorele#68). Classification goes through
+    the cluster vocabulary rather than a substring test, so "Korrekturliste wegen
+    Ablehnung" is the `info` it is and not a rejection.
+    """
+    if not result:
+        return "unknown"
+    return _OUTCOME_CLASS[cluster_to_kind(result.strip())]
+
+
 def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
     """Render an EBD decision tree as a Mermaid flowchart with full text."""
     steps = dt.get("steps", [])
@@ -46,6 +67,11 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
     lines = ["```mermaid", "flowchart TD"]
     lines.append("    classDef reject fill:#ffcccc,stroke:#cc0000")
     lines.append("    classDef accept fill:#ccffcc,stroke:#00cc00")
+    # `info` and `unknown` exist so that an outcome which is neither an approval nor a
+    # rejection is not painted as one. `unknown` in particular is what an outcome the
+    # source did not classify looks like: grey, not green.
+    lines.append("    classDef info fill:#e8eefc,stroke:#5b7fbd")
+    lines.append("    classDef unknown fill:#eeeeee,stroke:#999999")
     lines.append("")
 
     for step in steps:
@@ -61,10 +87,7 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
             result = step.get("if_yes_result", "")
             label = f"{code}: {result}" if result else code
             lines.append(f'    s{nr} -->|ja| ry{nr}["{_escape_mermaid(label)}"]')
-            if result and "ablehnung" in result.lower():
-                lines.append(f"    ry{nr}:::reject")
-            else:
-                lines.append(f"    ry{nr}:::accept")
+            lines.append(f"    ry{nr}:::{_outcome_class(result)}")
 
         # No branch
         if step.get("if_no") and isinstance(step["if_no"], int):
@@ -74,10 +97,7 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
             result = step.get("if_no_result", "")
             label = f"{code}: {result}" if result else code
             lines.append(f'    s{nr} -->|nein| rn{nr}["{_escape_mermaid(label)}"]')
-            if result and "ablehnung" in result.lower():
-                lines.append(f"    rn{nr}:::reject")
-            else:
-                lines.append(f"    rn{nr}:::accept")
+            lines.append(f"    rn{nr}:::{_outcome_class(result)}")
 
     lines.append("```")
     return lines
