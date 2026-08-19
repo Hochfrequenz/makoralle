@@ -43,19 +43,42 @@ def _wrap_text(text: str, max_len: int = 80) -> str:
 _OUTCOME_CLASS = {"rejection": "reject", "approval": "accept", "info": "info", "unknown": "unknown"}
 
 
-def _outcome_class(result: str | None) -> str:
-    """The mermaid class for a branch's outcome text.
+def _outcome_kind(cluster: str | None, result: str | None) -> str:
+    """Classify a branch's outcome: `rejection`, `approval`, `info` or `unknown`.
 
-    An absent result yields `unknown`, never `accept`: this used to fall through to the
-    approval styling, so an outcome nobody classified was drawn green (77 such nodes in
-    the shipped dataset, and a regeneration that empties more result fields turns
-    rejections green wholesale — makoralle#29, makorele#68). Classification goes through
-    the cluster vocabulary rather than a substring test, so "Korrekturliste wegen
-    Ablehnung" is the `info` it is and not a rejection.
+    `cluster` is the `Cluster:` prefix lifted out of the EBD's own Hinweis cell, so it
+    is the authority and is consulted first — 91 branches in the committed EBD data
+    carry one while their result text is empty, and those are exactly the outcomes that
+    used to be drawn as approvals. The result text is a fallback (1405 branches have one
+    and no cluster), and neither present means `unknown`.
+
+    `unknown` exists so that a missing classification is never rendered as an approval:
+    that fall-through drew 77 nodes in the shipped dataset green, and a regeneration that
+    empties more result fields turns rejections green wholesale (makoralle#29, triggered
+    by makorele#68). Both inputs go through the cluster vocabulary rather than a
+    substring test, so "Korrekturliste wegen Ablehnung" is the `info` it is.
     """
-    if not result:
-        return "unknown"
-    return _OUTCOME_CLASS[cluster_to_kind(result.strip())]
+    for value in (cluster, result):
+        if value and value.strip():
+            return cluster_to_kind(value.strip())
+    return "unknown"
+
+
+def _outcome_class(cluster: str | None, result: str | None) -> str:
+    """The mermaid class for a branch's outcome — see :func:`_outcome_kind`."""
+    return _OUTCOME_CLASS[_outcome_kind(cluster, result)]
+
+
+def _outcome_label(code: str, cluster: str | None, result: str | None) -> str:
+    """`A01: Ablehnung` — the code plus whatever names the outcome, or the bare code.
+
+    The cluster names it when the result text is missing, so a branch the EBD did
+    classify does not degrade to a bare answer code.
+    """
+    for value in (result, cluster):
+        if value and value.strip():
+            return f"{code}: {value.strip()}"
+    return code
 
 
 def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
@@ -85,9 +108,10 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
         elif step.get("if_yes_code"):
             code = step["if_yes_code"]
             result = step.get("if_yes_result", "")
-            label = f"{code}: {result}" if result else code
+            cluster = step.get("if_yes_cluster")
+            label = _outcome_label(code, cluster, result)
             lines.append(f'    s{nr} -->|ja| ry{nr}["{_escape_mermaid(label)}"]')
-            lines.append(f"    ry{nr}:::{_outcome_class(result)}")
+            lines.append(f"    ry{nr}:::{_outcome_class(cluster, result)}")
 
         # No branch
         if step.get("if_no") and isinstance(step["if_no"], int):
@@ -95,9 +119,10 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
         elif step.get("if_no_code"):
             code = step["if_no_code"]
             result = step.get("if_no_result", "")
-            label = f"{code}: {result}" if result else code
+            cluster = step.get("if_no_cluster")
+            label = _outcome_label(code, cluster, result)
             lines.append(f'    s{nr} -->|nein| rn{nr}["{_escape_mermaid(label)}"]')
-            lines.append(f"    rn{nr}:::{_outcome_class(result)}")
+            lines.append(f"    rn{nr}:::{_outcome_class(cluster, result)}")
 
     lines.append("```")
     return lines

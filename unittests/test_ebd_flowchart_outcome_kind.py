@@ -20,7 +20,7 @@ import pytest
 from makoralle.serialization.markdown import _render_ebd_flowchart
 
 
-def _flowchart(result_yes: str | None) -> str:
+def _flowchart(result_yes: str | None, cluster_yes: str | None = None) -> str:
     dt: dict[str, Any] = {
         "steps": [
             {
@@ -28,6 +28,7 @@ def _flowchart(result_yes: str | None) -> str:
                 "check": "Liegt eine Zuordnung vor?",
                 "if_yes_code": "A01",
                 "if_yes_result": result_yes,
+                "if_yes_cluster": cluster_yes,
                 "if_no": 20,
             }
         ]
@@ -77,3 +78,38 @@ def test_every_class_used_is_defined() -> None:
         defined = set(re.findall(r"classDef (\w+)", out))
         used = set(re.findall(r":::(\w+)", out))
         assert used <= defined, f"{used - defined} used but not defined (result={result!r})"
+
+
+def test_the_cluster_classifies_a_branch_whose_result_text_is_missing() -> None:
+    """`if_*_cluster` is the `Cluster:` prefix lifted out of the EBD's own Hinweis cell,
+    so it is the authority — and 91 branches in the committed EBD data carry it while
+    their result text is empty. Those are exactly the nodes that used to go green."""
+    out = _flowchart("", cluster_yes="Ablehnung auf Kopfebene")
+    assert "ry10:::reject" in out
+    assert "ry10:::unknown" not in out
+    assert 'ry10["A01: Ablehnung auf Kopfebene"]' in out, "the cluster also names the outcome"
+
+
+def test_the_cluster_wins_over_a_disagreeing_result_text() -> None:
+    """The result text is a rendering of the outcome; the cluster is its classification."""
+    out = _flowchart("Ablehnung", cluster_yes="Zustimmung")
+    assert "ry10:::accept" in out
+    assert "ry10:::reject" not in out
+
+
+def test_an_informational_cluster_is_neither() -> None:
+    out = _flowchart("", cluster_yes="Korrekturliste wegen Ablehnung")
+    assert "ry10:::info" in out
+
+
+def test_a_result_text_still_classifies_when_no_cluster_was_extracted() -> None:
+    """1405 branches in the committed data have a result and no cluster."""
+    out = _flowchart("Ablehnung", cluster_yes=None)
+    assert "ry10:::reject" in out
+    assert 'ry10["A01: Ablehnung"]' in out
+
+
+def test_neither_cluster_nor_result_is_unknown() -> None:
+    out = _flowchart("", cluster_yes=None)
+    assert "ry10:::unknown" in out
+    assert 'ry10["A01"]' in out
