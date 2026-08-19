@@ -151,22 +151,68 @@ def _open_lines(frag: SDFragment, branch_idx: int) -> list[str]:
 _NOTE_PLACEMENT = {"over": "over", "left": "left of", "right": "right of", "left of": "left of", "right of": "right of"}
 
 
+#: What the pipeline writes for an endpoint it could not read: neither the step's action
+#: text nor Vision named the actor (makorele p08 ``extract_roles_from_action``). It is a
+#: placeholder, not a name — every consumer that reasons about actors already skips it,
+#: but WSD has no such notion: naming it in an arrow makes websequencediagrams auto-place
+#: a lane called "?" that no participant list declares and that a reader cannot tell from
+#: a real actor (makorele#78).
+UNKNOWN_ENDPOINT = "?"
+
+
+def _is_known(role: str | None) -> bool:
+    return bool(role) and role != UNKNOWN_ENDPOINT
+
+
+def _unknown_endpoint_note(step: SDStep, text: str) -> str | None:
+    """The step rendered as a flagged note on the endpoint that *is* known, or None.
+
+    Only for a step with exactly one unreadable endpoint, and never for a ``ref``, which
+    sits on one lifeline anyway and is handled by :func:`_ref_lifeline`.
+
+    A note rather than an arrow because an arrow needs two actors and only one is known:
+    drawing it to a "?" lane asserts an actor the source does not have, and drawing it as
+    a self-message asserts the known actor talked to itself. The note says what the step
+    says and leaves the other side open. It carries the ``[REVIEW]`` flag, so the step
+    lands on the "Prüfung nötig" worklist ``extract_review_notes`` builds: an unread
+    endpoint is a defect to fix in the data, not a property of the process.
+    """
+    if (step.message or "").strip().lower().startswith("ref "):
+        return None
+    sender_known, receiver_known = _is_known(step.sender), _is_known(step.receiver)
+    if sender_known == receiver_known:  # both readable, or neither
+        return None
+    who = step.sender if sender_known else step.receiver
+    missing = "Empfänger" if sender_known else "Absender"
+    return f"note over {who}: (!) {_clean_note_text(text)} — {missing} unbekannt  [REVIEW]"
+
+
 def _ref_lifeline(step: SDStep, participants: list[str]) -> str:
     """The lifeline a subprocess-reference box sits on: the sender (the invoking
-    role), falling back to receiver, then the first participant."""
+    role), falling back to receiver, then the first participant.
+
+    Returns :data:`UNKNOWN_ENDPOINT` when even that is unavailable; the caller drops the
+    step rather than drawing a "?" lifeline (makorele#78).
+    """
     for cand in (step.sender, step.receiver):
-        if cand and cand != "?":
+        if _is_known(cand):
             return cand
-    return participants[0] if participants else "?"
+    return next((p for p in participants if _is_known(p)), UNKNOWN_ENDPOINT)
 
 
 def _emit_note(lines: list[str], note: SDNote) -> None:
-    """Append a note line, skipping notes with no participants (Fix 3)."""
-    if not note.participants:
-        logger.debug("skipping note with empty participants: %r", note.text)
+    """Append a note line, skipping notes with no participants (Fix 3).
+
+    An anchor the pipeline could not resolve is dropped from the anchor list rather than
+    named: ``note over ?`` places the same phantom lane an arrow to "?" would (makorele#78).
+    A note left with no anchor at all is skipped, as an anchorless one always was.
+    """
+    anchors = [p for p in note.participants if _is_known(p)]
+    if not anchors:
+        logger.debug("skipping note with no known participants: %r", note.text)
         return
     placement = _NOTE_PLACEMENT.get(note.position, "over")
-    parts = ",".join(note.participants)
+    parts = ",".join(anchors)
     lines.append(f"note {placement} {parts}: {note.text}")
 
 
@@ -192,7 +238,11 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
         lines.append(f"title {title}")
     lines.append(f"# style: {style}")  # consumed by the render script, ignored by parser
     for p in sd.participants:
-        lines.append(f"participant {p}")
+        # A "?" in the participant list would declare the very lane the notes below exist
+        # to avoid; makorele's p08 writes it when a diagram yielded no readable actor at
+        # all, and p12 leaves it in the note anchors it does not resolve (makorele#78).
+        if _is_known(p):
+            lines.append(f"participant {p}")
 
     paths = _build_step_paths(sd.fragments)
     notes_by_step: dict[int | None, list[SDNote]] = {}
@@ -270,9 +320,25 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             # Vision often mis-guesses a different receiver for these (e.g. NB->LFA
             # for an NB self-reference), so loop on the sender's lifeline.
             lifeline = _ref_lifeline(step, sd.participants)
-            lines.append(f"{lifeline}{_arrow(step)}{lifeline}: {step.nr}. {msg}{suffix}")
+            if _is_known(lifeline):
+                lines.append(f"{lifeline}{_arrow(step)}{lifeline}: {step.nr}. {msg}{suffix}")
+            else:
+                # Both endpoints unread *and* no participant to fall back on: the
+                # self-arrow would be "?->>?", two phantom lanes for one step.
+                logger.warning("dropping ref step %s from the diagram: no lifeline is known", step.nr)
         else:
-            lines.append(f"{step.sender}{_arrow(step)}{step.receiver}: {step.nr}. {msg}{suffix}")
+            text = f"{step.nr}. {msg}{suffix}"
+            unknown = _unknown_endpoint_note(step, text)
+            if unknown:
+                logger.debug("step %s has an unreadable endpoint, rendering it as a note", step.nr)
+                lines.append(unknown)
+            elif _is_known(step.sender) and _is_known(step.receiver):
+                lines.append(f"{step.sender}{_arrow(step)}{step.receiver}: {text}")
+            else:
+                # Neither endpoint is known: there is no lifeline to anchor a note to, and
+                # inventing one would put the step under an actor it may have nothing to do
+                # with. The step stays in the YAML/JSON, which is where it can be repaired.
+                logger.warning("dropping step %s from the diagram: neither endpoint is known", step.nr)
 
         dl_note = _deadline_note(step, sd.participants)
         if dl_note:
