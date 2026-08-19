@@ -15,9 +15,9 @@ the two corpora. What this test guarantees is the thing that matters in the mean
 
 For the record, the rules measured against this fixture:
 
-    the result text, by substring ("ablehnung")    57 %   <- what shipped before makoralle#29
-    cluster, falling back to the result text       72 %
-    cluster only, else unknown                     92 %   <- current
+    the result text, by substring ("ablehnung")    822/1407   58.4 %   <- shipped before #29
+    cluster, falling back to the result text      1030/1407   73.2 %
+    cluster only, else unknown                   1304/1407   92.7 %   <- current
 
 Long run, this homebrew EBD path should give way to that toolchain entirely —
 Hochfrequenz/mako_prozesse#1.
@@ -32,8 +32,15 @@ from makoralle.serialization.markdown import _outcome_cluster, _outcome_kind
 
 FIXTURE = Path(__file__).parent / "fixtures" / "verified_ebd_outcome_kinds.json"
 
-#: Matches out of 1407 verified answer codes, as measured when this test was written.
-MINIMUM_AGREEMENT = 1298
+#: Matches out of 1407 verified answer codes, as measured on this code. Pinned exactly,
+#: not with slack: a review showed that 6 codes of headroom let a real regression through
+#: — dropping `erfolgreich` from the vocabulary turns 4 verified approvals grey and still
+#: scored 1300. Raise this when a change earns it; never lower it.
+MINIMUM_AGREEMENT = 1304
+
+#: Per-kind floors, because the total alone cannot see a kind draining into `unknown`.
+#: Every verified approval and every verified rejection is currently classified exactly.
+MINIMUM_PER_KIND = {"approval": 92, "rejection": 822, "info": 116}
 
 
 def _cases() -> list[dict[str, Any]]:
@@ -55,15 +62,26 @@ def test_agreement_with_the_verified_ebds_does_not_regress() -> None:
     )
 
 
+def test_agreement_per_kind_does_not_regress() -> None:
+    """The total can hide a whole kind draining into `unknown`, which is how the 6 codes
+    of slack this file used to allow let a mutation through: it dropped `erfolgreich`,
+    greyed out 4 verified approvals, and the total still cleared the floor."""
+    matched = Counter(c["verified_kind"] for c in _cases() if _classify(c) == c["verified_kind"])
+    for kind, floor in MINIMUM_PER_KIND.items():
+        assert matched[kind] >= floor, f"{kind}: {matched[kind]} matched, floor is {floor}"
+
+
 def test_no_verified_approval_is_rendered_as_a_rejection() -> None:
     """The direction that misleads worst: telling a reader a branch was refused when the
-    source says it was agreed. 98 codes were in this state before makoralle#29."""
+    source says it was agreed. **92** codes were in this state before makoralle#29."""
     wrong = [c for c in _cases() if c["verified_kind"] == "approval" and _classify(c) == "rejection"]
     assert not wrong, f"{len(wrong)} verified approvals classified as rejections, e.g. {wrong[:3]}"
 
 
 def test_no_verified_rejection_is_rendered_as_an_approval() -> None:
-    """The other direction: 91 codes were in this state before makoralle#29."""
+    """The other direction. Not a historical claim — the old rule never did this (0
+    cases): it drew *unclassified* outcomes as approvals instead, 91 of them, which is a
+    different error. This guards the crossing that would be worst to introduce."""
     wrong = [c for c in _cases() if c["verified_kind"] == "rejection" and _classify(c) == "approval"]
     assert not wrong, f"{len(wrong)} verified rejections classified as approvals, e.g. {wrong[:3]}"
 

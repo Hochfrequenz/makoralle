@@ -9,13 +9,14 @@ Measured against **Hochfrequenz/machine-readable_entscheidungsbaumdiagramme**, w
 every EBD is verified from an independent source (ebdamame + rebdhuhn), over the 1437
 answer codes it shares with this pipeline's data (FV2604 and FV2610 agree):
 
-    the result text, by substring ("ablehnung")   829/1437   57 %   <- what shipped
-    cluster, falling back to the result text     1045/1437   72 %
-    cluster only, else unknown                   1328/1437   92 %   <- this module
+    the result text, by substring ("ablehnung")    822/1407   58.4 %   <- what shipped
+    cluster, falling back to the result text      1030/1407   73.2 %
+    cluster only, else unknown                   1304/1407   92.7 %   <- this module
 
-92 % is also what the pipeline's own `answer_codes.yaml` scores, so the rendering is now
-as faithful as its dedicated index. The fallback is what cost the other 20 points: it
-invents a rejection for 386 codes the verified data classifies as unknown.
+Per verified kind the current rule is exact where it matters: 92/92 approvals and
+822/822 rejections. The fallback cost 19 points by inventing a rejection for 372 codes
+the verified data calls unknown. (The pipeline's own `answer_codes.yaml` scores the same
+92.7 %, but that is not independent corroboration — it uses the same vocabulary.)
 
 Verified sources for the cases below, pinned at commit 834fd748cca1b51c37e883d8beb67001247bd552:
 
@@ -95,9 +96,9 @@ def test_the_resolved_field_outranks_the_hint() -> None:
 @pytest.mark.parametrize("result", ["", None, "Ablehnung", "weiter wie in Schritt 5"])
 def test_without_a_cluster_the_outcome_is_unknown(result: str | None) -> None:
     """Whatever the result text says. It is a constant per EBD, and taking it for a
-    classification is what disagreed with the verified data on 386 codes — in both
-    directions: 98 verified approvals shown as rejections, and 77 nodes shown as
-    approvals purely because the text was missing."""
+    classification is what disagreed with the verified data on 585 codes — including 92
+    verified approvals shown as rejections, 120 infos shown as rejections, and 77 nodes
+    shown as approvals purely because the text was missing."""
     out = _flowchart(result=result)
     assert "ry10:::unknown" in out
     assert "ry10:::accept" not in out and "ry10:::reject" not in out

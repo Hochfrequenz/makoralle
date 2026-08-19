@@ -67,18 +67,20 @@ def _outcome_kind(cluster: str | None, result: str | None) -> str:
     from an independent source (ebdamame + rebdhuhn). Over the 1437 answer codes shared
     with that repo (FV2604 and FV2610 agree):
 
-    ==========================================  =========
+    ==========================================  ==============
     rule                                        agreement
-    ==========================================  =========
-    the result text, by substring ("ablehnung")   57 %
-    cluster, falling back to the result text      72 %
-    **cluster only, else unknown**                **92 %**
-    ==========================================  =========
+    ==========================================  ==============
+    the result text, by substring ("ablehnung")  822/1407 58.4 %
+    cluster, falling back to the result text    1030/1407 73.2 %
+    **cluster only, else unknown**             1304/1407 92.7 %
+    ==========================================  ==============
 
-    The fallback is what costs the 20 points: the result text carries the same constant
-    for every code of an EBD, so it invents a rejection for 386 codes the verified data
-    classifies as unknown. 92 % is also exactly what the dataset's own answer_codes.yaml
-    scores, i.e. this is now as good as the pipeline's dedicated index.
+    The fallback is what costs the 19 points: the result text carries the same constant
+    for every code of an EBD, so it invents a rejection for 372 codes the verified data
+    classifies as unknown. Per kind, the current rule classifies every verified approval
+    (92/92) and every verified rejection (822/822) exactly; the residue is 98 codes where
+    this pipeline has a cluster the verified corpus does not, plus 5 info/unknown
+    crossings.
     """
     del result  # deliberately unused: it does not classify anything
     if cluster and cluster.strip():
