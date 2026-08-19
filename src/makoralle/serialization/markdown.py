@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 
 from makoralle.config import AHB_PID_URL
-from makoralle.ebd_clusters import cluster_to_kind
+from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
 
 
 def _escape_mermaid(text: str) -> str:
@@ -43,24 +43,46 @@ def _wrap_text(text: str, max_len: int = 80) -> str:
 _OUTCOME_CLASS = {"rejection": "reject", "approval": "accept", "info": "info", "unknown": "unknown"}
 
 
+def _outcome_cluster(cluster: str | None, hint: str | None) -> str | None:
+    """The branch's cluster: the resolved field, else the `Cluster:` prefix of its hint.
+
+    p09 does not always lift the prefix into `if_*_cluster` — in the committed EBD data
+    only 91 branches have the field while **1110** carry the prefix in the hint alone.
+    """
+    if cluster and cluster.strip():
+        return cluster.strip()
+    extracted, _ = extract_cluster(hint)
+    return extracted
+
+
 def _outcome_kind(cluster: str | None, result: str | None) -> str:
     """Classify a branch's outcome: `rejection`, `approval`, `info` or `unknown`.
 
-    `cluster` is the `Cluster:` prefix lifted out of the EBD's own Hinweis cell, so it
-    is the authority and is consulted first — 91 branches in the committed EBD data
-    carry one while their result text is empty, and those are exactly the outcomes that
-    used to be drawn as approvals. The result text is a fallback (1405 branches have one
-    and no cluster), and neither present means `unknown`.
+    Only the cluster classifies (see :func:`_outcome_cluster`); `result` is accepted as
+    an argument so callers cannot mistake it for one. Without a cluster the answer is
+    `unknown` — grey — never an approval and never a rejection.
 
-    `unknown` exists so that a missing classification is never rendered as an approval:
-    that fall-through drew 77 nodes in the shipped dataset green, and a regeneration that
-    empties more result fields turns rejections green wholesale (makoralle#29, triggered
-    by makorele#68). Both inputs go through the cluster vocabulary rather than a
-    substring test, so "Korrekturliste wegen Ablehnung" is the `info` it is.
+    That split is not a judgement call, it is measured against
+    Hochfrequenz/machine-readable_entscheidungsbaumdiagramme, where every EBD is verified
+    from an independent source (ebdamame + rebdhuhn). Over the 1437 answer codes shared
+    with that repo (FV2604 and FV2610 agree):
+
+    ==========================================  =========
+    rule                                        agreement
+    ==========================================  =========
+    the result text, by substring ("ablehnung")   57 %
+    cluster, falling back to the result text      72 %
+    **cluster only, else unknown**                **92 %**
+    ==========================================  =========
+
+    The fallback is what costs the 20 points: the result text carries the same constant
+    for every code of an EBD, so it invents a rejection for 386 codes the verified data
+    classifies as unknown. 92 % is also exactly what the dataset's own answer_codes.yaml
+    scores, i.e. this is now as good as the pipeline's dedicated index.
     """
-    for value in (cluster, result):
-        if value and value.strip():
-            return cluster_to_kind(value.strip())
+    del result  # deliberately unused: it does not classify anything
+    if cluster and cluster.strip():
+        return cluster_to_kind(cluster.strip())
     return "unknown"
 
 
@@ -70,12 +92,14 @@ def _outcome_class(cluster: str | None, result: str | None) -> str:
 
 
 def _outcome_label(code: str, cluster: str | None, result: str | None) -> str:
-    """`A01: Ablehnung` — the code plus whatever names the outcome, or the bare code.
+    """`A01: Zustimmung` — the code plus whatever names the outcome, or the bare code.
 
-    The cluster names it when the result text is missing, so a branch the EBD did
-    classify does not degrade to a bare answer code.
+    The cluster names it first, so a branch the EBD did classify does not degrade to a
+    bare answer code. The result text is still allowed to *name* an outcome even though
+    it may not *classify* one (see :func:`_outcome_kind`): a possibly-stale name is
+    better than none, whereas a wrong colour asserts something the source did not say.
     """
-    for value in (result, cluster):
+    for value in (cluster, result):
         if value and value.strip():
             return f"{code}: {value.strip()}"
     return code
@@ -108,7 +132,7 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
         elif step.get("if_yes_code"):
             code = step["if_yes_code"]
             result = step.get("if_yes_result", "")
-            cluster = step.get("if_yes_cluster")
+            cluster = _outcome_cluster(step.get("if_yes_cluster"), step.get("if_yes_hint"))
             label = _outcome_label(code, cluster, result)
             lines.append(f'    s{nr} -->|ja| ry{nr}["{_escape_mermaid(label)}"]')
             lines.append(f"    ry{nr}:::{_outcome_class(cluster, result)}")
@@ -119,7 +143,7 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
         elif step.get("if_no_code"):
             code = step["if_no_code"]
             result = step.get("if_no_result", "")
-            cluster = step.get("if_no_cluster")
+            cluster = _outcome_cluster(step.get("if_no_cluster"), step.get("if_no_hint"))
             label = _outcome_label(code, cluster, result)
             lines.append(f'    s{nr} -->|nein| rn{nr}["{_escape_mermaid(label)}"]')
             lines.append(f"    rn{nr}:::{_outcome_class(cluster, result)}")
