@@ -23,6 +23,27 @@ class DeadlineRule(BaseModel):
     raw: str = ""  # original free-text deadline
 
 
+#: What the pipeline writes for an endpoint it could not read: neither the step's action
+#: text nor Vision named the actor (makorele p08 ``extract_roles_from_action``). It is a
+#: placeholder, not a name — every consumer that reasons about actors already skips it,
+#: but a serializer that draws a lifeline per actor has no such notion: naming it makes
+#: the renderer place a lane called "?" that no participant list declares and that a
+#: reader cannot tell from a real actor (makorele#78).
+UNKNOWN_ENDPOINT = "?"
+
+
+def is_known_actor(role: str | None) -> bool:
+    """True if ``role`` names an actor rather than standing in for one we could not read.
+
+    Lives beside the fields it judges, because it is a property of the model rather than
+    of one output dialect: the WSD and the Mermaid serializer both need the same rule.
+
+    >>> is_known_actor("NB"), is_known_actor("?"), is_known_actor("")
+    (True, False, False)
+    """
+    return bool(role) and role != UNKNOWN_ENDPOINT
+
+
 class SDStep(BaseModel):
     """A single sequence-diagram step (one message from a sender to a receiver)."""
 

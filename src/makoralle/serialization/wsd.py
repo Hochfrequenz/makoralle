@@ -4,7 +4,15 @@ import json
 import logging
 from pathlib import Path
 
-from makoralle.models.process import DeadlineRule, SDFragment, SDNote, SDStep, SequenceDiagram
+from makoralle.models.process import (
+    UNKNOWN_ENDPOINT,
+    DeadlineRule,
+    SDFragment,
+    SDNote,
+    SDStep,
+    SequenceDiagram,
+    is_known_actor,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,24 +159,6 @@ def _open_lines(frag: SDFragment, branch_idx: int) -> list[str]:
 _NOTE_PLACEMENT = {"over": "over", "left": "left of", "right": "right of", "left of": "left of", "right of": "right of"}
 
 
-#: What the pipeline writes for an endpoint it could not read: neither the step's action
-#: text nor Vision named the actor (makorele p08 ``extract_roles_from_action``). It is a
-#: placeholder, not a name — every consumer that reasons about actors already skips it,
-#: but WSD has no such notion: naming it in an arrow makes websequencediagrams auto-place
-#: a lane called "?" that no participant list declares and that a reader cannot tell from
-#: a real actor (makorele#78).
-UNKNOWN_ENDPOINT = "?"
-
-
-def is_known_actor(role: str | None) -> bool:
-    """True if ``role`` names an actor rather than standing in for one we could not read.
-
-    Public because every serializer needs the same rule — the Mermaid path in
-    :mod:`makoralle.serialization.markdown` draws a lifeline per participant too.
-    """
-    return bool(role) and role != UNKNOWN_ENDPOINT
-
-
 def _unknown_endpoint_note(step: SDStep, text: str) -> str | None:
     """The step rendered as a flagged note on the endpoint that *is* known, or None.
 
@@ -190,8 +180,24 @@ def _unknown_endpoint_note(step: SDStep, text: str) -> str | None:
     if sender_known == receiver_known:  # both readable, or neither
         return None
     who = step.sender if sender_known else step.receiver
-    missing = "Empfänger" if sender_known else "Absender"
-    return f"note over {who}: (!) {_clean_note_text(text)} — {missing} unbekannt  [REVIEW]"
+    # Deliberately not "Absender"/"Empfänger unbekannt": when two identically labelled
+    # lifelines collapse into one (WiM Teil 2 2.6.3 — two ":MSB" lanes told apart only by
+    # their notes), which of the two endpoints keeps the surviving role is arbitrary, so
+    # naming the missing side would state a direction the data cannot support. For that
+    # very step the source has the *receiver* unplaced while the YAML says sender="?".
+    return f"note over {who}: (!) {_clean_note_text(text)} — Gegenstelle ungelesen  [REVIEW]"
+
+
+def _span(lanes: list[str]) -> str:
+    """The lane list for a note that belongs to no single actor: the outermost two.
+
+    Not every lane: ``note over`` takes one or two participants — Mermaid's grammar says
+    so outright (``actor_pair : actor ',' actor | actor``) and the websequencediagrams
+    reference shows no more either, so a third name is at best undefined and at worst
+    breaks the whole diagram. Naming the first and the last declared lane spans the same
+    width without asserting anything about the ones between.
+    """
+    return lanes[0] if len(lanes) == 1 else f"{lanes[0]},{lanes[-1]}"
 
 
 def _ref_lifeline(step: SDStep, participants: list[str]) -> str:
@@ -352,9 +358,9 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
                 # one-sided case above, not better — and it stays in the step table the
                 # webapp builds from the YAML either way, so a silent drop would leave a
                 # step listed that appears nowhere in the diagram and on no worklist.
-                lanes = ",".join(known_lanes)
+                lanes = _span(known_lanes)
                 body = _clean_note_text(text)
-                lines.append(f"note over {lanes}: (!) {body} — Absender und Empfänger unbekannt  [REVIEW]")
+                lines.append(f"note over {lanes}: (!) {body} — beide Endpunkte ungelesen  [REVIEW]")
             else:
                 # No lane at all to hang it on — a diagram in which nothing was read.
                 logger.warning("dropping step %s from the diagram: no endpoint and no lane is known", step.nr)

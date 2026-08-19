@@ -555,12 +555,16 @@ def test_emit_complex_deadline_note_on_ref_step_uses_sender_lifeline() -> None:
 
 
 def test_unread_receiver_becomes_a_flagged_note_on_the_sender() -> None:
+    """The note names the endpoint that survived and says nothing about which side is
+    missing: when two identically labelled lanes collapse, which endpoint keeps the role
+    is arbitrary — for the WiM 2.6.3 step below the source has the *receiver* unplaced
+    while the YAML says ``sender="?"``."""
     sd = SequenceDiagram(
         participants=["NB", "MSB", "MSB (weiterer)", "ÜNB"],
         steps=[SDStep(nr=10, sender="MSB", receiver="?", message="Mitteilung über Gesamtvorgang")],
     )
     lines = emit_wsd(sd).splitlines()
-    assert "note over MSB: (!) 10. Mitteilung über Gesamtvorgang — Empfänger unbekannt  [REVIEW]" in lines
+    assert "note over MSB: (!) 10. Mitteilung über Gesamtvorgang — Gegenstelle ungelesen  [REVIEW]" in lines
     assert not [line for line in lines if "?" in line]
 
 
@@ -570,7 +574,7 @@ def test_unread_sender_becomes_a_flagged_note_on_the_receiver() -> None:
         steps=[SDStep(nr=4, sender="?", receiver="MSB", message="Anforderung Wert einer Messlokation")],
     )
     lines = emit_wsd(sd).splitlines()
-    assert "note over MSB: (!) 4. Anforderung Wert einer Messlokation — Absender unbekannt  [REVIEW]" in lines
+    assert "note over MSB: (!) 4. Anforderung Wert einer Messlokation — Gegenstelle ungelesen  [REVIEW]" in lines
     assert not [line for line in lines if "?" in line]
 
 
@@ -595,7 +599,7 @@ def test_the_note_keeps_the_step_annotations() -> None:
     note = next(line for line in emit_wsd(sd).splitlines() if line.startswith("note "))
     assert note == (
         "note over MSB: (!) 10. Mitteilung über Gesamtvorgang (UTILMD 55001) [E_0401] {u} "
-        "— Empfänger unbekannt  [REVIEW]"
+        "— Gegenstelle ungelesen  [REVIEW]"
     )
 
 
@@ -622,7 +626,7 @@ def test_a_step_with_neither_endpoint_known_spans_the_declared_lanes() -> None:
     )
     lines = emit_wsd(sd).splitlines()
     assert "NB->>NB: 1. Bekannt" in lines
-    assert "note over NB,MSB: (!) 2. Beide Enden ungelesen — Absender und Empfänger unbekannt  [REVIEW]" in lines
+    assert "note over NB,MSB: (!) 2. Beide Enden ungelesen — beide Endpunkte ungelesen  [REVIEW]" in lines
     assert not [line for line in lines if "?" in line]
 
 
@@ -709,4 +713,22 @@ def test_a_review_note_from_an_unread_endpoint_reaches_the_worklist() -> None:
         participants=["MSB"],
         steps=[SDStep(nr=10, sender="MSB", receiver="?", message="Mitteilung über Gesamtvorgang")],
     )
-    assert extract_review_notes(emit_wsd(sd)) == ["(!) 10. Mitteilung über Gesamtvorgang — Empfänger unbekannt"]
+    assert extract_review_notes(emit_wsd(sd)) == ["(!) 10. Mitteilung über Gesamtvorgang — Gegenstelle ungelesen"]
+
+
+def test_a_span_names_two_lanes_however_many_are_declared() -> None:
+    """``note over`` takes one or two participants — Mermaid's grammar says so outright
+    and the websequencediagrams reference shows no more — so spanning every lane of a
+    four-lane diagram would break the diagram rather than the line."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB", "MSB (weiterer)", "ÜNB"],
+        steps=[SDStep(nr=2, sender="?", receiver="?", message="Unklar")],
+    )
+    note = next(line for line in emit_wsd(sd).splitlines() if line.startswith("note "))
+    assert note == "note over NB,ÜNB: (!) 2. Unklar — beide Endpunkte ungelesen  [REVIEW]"
+
+
+def test_a_span_of_one_lane_names_it_alone() -> None:
+    sd = SequenceDiagram(participants=["NB"], steps=[SDStep(nr=2, sender="?", receiver="?", message="Unklar")])
+    note = next(line for line in emit_wsd(sd).splitlines() if line.startswith("note "))
+    assert note == "note over NB: (!) 2. Unklar — beide Endpunkte ungelesen  [REVIEW]"

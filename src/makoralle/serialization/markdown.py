@@ -1,5 +1,6 @@
 """Render process YAML into MkDocs-flavoured Markdown (with Mermaid diagrams)."""
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,9 @@ import yaml
 
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
-from makoralle.serialization.wsd import is_known_actor
+from makoralle.models.process import is_known_actor
+
+logger = logging.getLogger(__name__)
 
 
 def _escape_mermaid(text: str) -> str:
@@ -230,7 +233,13 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     has_tags = bool(types & {"unverzüglich", "parallel", "terminiert"})
     has_reference = "reference" in types
     has_complex = "complex" in types
-    if not (has_tags or has_reference or has_complex):
+    # The same "(!)" marker now also flags a step whose endpoint could not be read
+    # (makorele#78), and that step need not carry a deadline at all — without this the
+    # legend either omits the marker the diagram shows or defines it as a Frist it is not.
+    has_unread_endpoint = any(
+        any(end in step and not is_known_actor(step[end]) for end in ("sender", "receiver")) for step in steps
+    )
+    if not (has_tags or has_reference or has_complex or has_unread_endpoint):
         return []
     lines = ["**Fristen (Legende der Diagramm-Markierungen):**", ""]
     if has_tags:
@@ -247,6 +256,8 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
         )
     if has_complex:
         lines.append("- `(!) … [REVIEW]` (Notiz) — komplexe Frist, noch nicht strukturiert geparst")
+    if has_unread_endpoint:
+        lines.append("- `(!) … ungelesen` (Notiz) — Schritt mit unlesbarem Endpunkt, als Notiz statt als Pfeil")
     lines.append("")
     return lines
 
@@ -275,6 +286,7 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         pids = step.get("pid_refs", [])
 
         # Build message label
+        is_ref = bool(subprocess_ref) or (message or "").strip().lower().startswith("ref ")
         if subprocess_ref:
             label = f"{nr}. ref {message}"
         else:
@@ -289,23 +301,32 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         # head distinction has no clean Mermaid equivalent, so it is not carried here.
         arrow = "-->>" if step.get("line") == "dashed" else "->>"
 
+        anchor = next((role for role in (sender, receiver) if is_known_actor(role)), None)
         if is_known_actor(sender) and is_known_actor(receiver):
             lines.append(f"    {sender}{arrow}+{receiver}: {label}")
             if subprocess_ref and sender != receiver:
                 lines.append(f"    Note right of {receiver}: Subprocess call")
-        else:
+        elif is_ref and anchor:
+            # A "ref" is a subprocess box on one lifeline, so its other endpoint never
+            # named an actor: it stays the self-message the .wsd emitter draws, rather
+            # than becoming a note that reports a missing counterpart it never had.
+            lines.append(f"    {anchor}{arrow}+{anchor}: {label}")
+        elif anchor:
             # An endpoint the pipeline could not read: say the step and leave the other
             # side open, rather than drawing an arrow to a lane that stands for
             # "unknown". The .wsd rendering does the same, with a [REVIEW] flag the
             # webapp's worklist picks up; this document has no such worklist, so the
-            # marker is plain text.
-            anchor = next((role for role in (sender, receiver) if is_known_actor(role)), None)
-            placement = f"Note over {anchor}" if anchor else f"Note over {','.join(known_lanes)}"
-            if anchor or known_lanes:
-                missing = "Empfänger" if is_known_actor(sender) else "Absender"
-                if not anchor:
-                    missing = "Absender und Empfänger"
-                lines.append(f"    {placement}: (!) {label} — {missing} unbekannt")
+            # marker is plain text. Which side is missing is left unsaid on purpose —
+            # see _unknown_endpoint_note in the .wsd emitter.
+            lines.append(f"    Note over {anchor}: (!) {label} — Gegenstelle ungelesen")
+        elif known_lanes:
+            # Neither endpoint known: span the outermost lanes. Note over takes at most
+            # two actors in Mermaid's grammar (actor_pair), so naming every lane would
+            # break the whole diagram, not just this line.
+            span = known_lanes[0] if len(known_lanes) == 1 else f"{known_lanes[0]},{known_lanes[-1]}"
+            lines.append(f"    Note over {span}: (!) {label} — beide Endpunkte ungelesen")
+        else:
+            logger.warning("dropping step %s from the Mermaid diagram: no lane is known", nr)
 
     lines.append("```")
     return lines

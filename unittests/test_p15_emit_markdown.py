@@ -166,7 +166,7 @@ def test_mermaid_renders_an_unread_endpoint_as_a_note() -> None:
         }
     )
     assert "    MSB->>+NB: 9. Antwort auf Bestellung" in lines
-    assert "    Note over MSB: (!) 10. Mitteilung über Gesamtvorgang — Empfänger unbekannt" in lines
+    assert "    Note over MSB: (!) 10. Mitteilung über Gesamtvorgang — Gegenstelle ungelesen" in lines
     assert not [line for line in lines if "?" in line]
 
 
@@ -177,7 +177,7 @@ def test_mermaid_names_the_receiver_when_the_sender_is_the_unread_one() -> None:
             "steps": [{"nr": 4, "sender": "?", "receiver": "MSB", "message": "Anforderung Wert einer Messlokation"}],
         }
     )
-    assert "    Note over MSB: (!) 4. Anforderung Wert einer Messlokation — Absender unbekannt" in lines
+    assert "    Note over MSB: (!) 4. Anforderung Wert einer Messlokation — Gegenstelle ungelesen" in lines
 
 
 def test_mermaid_never_declares_the_placeholder_as_a_participant() -> None:
@@ -192,7 +192,7 @@ def test_mermaid_spans_the_lanes_when_neither_endpoint_is_known() -> None:
     lines = _render_sequence_diagram(
         {"participants": ["NB", "MSB"], "steps": [{"nr": 2, "sender": "?", "receiver": "?", "message": "Unklar"}]}
     )
-    assert "    Note over NB,MSB: (!) 2. Unklar — Absender und Empfänger unbekannt" in lines
+    assert "    Note over NB,MSB: (!) 2. Unklar — beide Endpunkte ungelesen" in lines
     assert not [line for line in lines if "?" in line]
 
 
@@ -205,3 +205,48 @@ def test_mermaid_keeps_a_readable_step_unchanged() -> None:
         }
     )
     assert "    LF->>+NB: 1. Anmeldung [UTILMD]" in lines
+
+
+def test_mermaid_spans_only_two_lanes_however_many_are_declared() -> None:
+    """Mermaid's grammar is ``actor_pair : actor ',' actor | actor`` — a third name makes
+    the whole ```mermaid block fail to parse, so the page loses its diagram entirely."""
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["NB", "LF", "MSB"],
+            "steps": [{"nr": 2, "sender": "?", "receiver": "?", "message": "Unklar"}],
+        }
+    )
+    assert "    Note over NB,MSB: (!) 2. Unklar — beide Endpunkte ungelesen" in lines
+
+
+def test_mermaid_keeps_a_ref_step_a_self_message() -> None:
+    """As in the .wsd emitter: a ``ref`` sits on one lifeline, so its unread other end
+    never named an actor and reporting a missing counterpart would be wrong. 11 of the
+    16 "?" endpoints in the corpus are of this kind."""
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["MSB"],
+            "steps": [
+                {
+                    "nr": 9,
+                    "sender": "MSB",
+                    "receiver": "?",
+                    "message": "Aufbereitung und Übermittlung von Werten",
+                    "subprocess_ref": "aufbereitung_und_übermittlung_von_werten",
+                }
+            ],
+        }
+    )
+    assert "    MSB->>+MSB: 9. ref Aufbereitung und Übermittlung von Werten" in lines
+    assert not [line for line in lines if "ungelesen" in line]
+
+
+def test_mermaid_legend_defines_the_unread_endpoint_marker() -> None:
+    """The legend renders for an unread endpoint even when the diagram has no deadline —
+    otherwise the page shows a "(!)" the legend does not define, or defines as a Frist."""
+    legend = _deadline_legend({"steps": [{"nr": 1, "sender": "?", "receiver": "NB", "message": "A"}]})
+    assert [line for line in legend if "unlesbarem Endpunkt" in line]
+
+
+def test_mermaid_legend_stays_empty_for_a_clean_diagram() -> None:
+    assert _deadline_legend({"steps": [{"nr": 1, "sender": "LF", "receiver": "NB", "message": "A"}]}) == []
