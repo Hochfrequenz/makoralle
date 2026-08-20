@@ -60,7 +60,11 @@ def _terminiert_core(rule: DeadlineRule) -> str:
     ``≤20WT vor Änderungstermin``, ``≤11WT nach #2``, ``≤Zahlungsziel``,
     ``täglich ≤14:00``."""
     if rule.recurring:
-        return f"täglich ≤{rule.latest_time}" if rule.latest_time else "täglich"
+        # `recurrence` names the granularity the source used; "täglich" only as the fallback for
+        # a rule written before the field existed. Saying "täglich" for a werktäglich obligation
+        # is not a shortening but a different claim — it adds Saturdays and Sundays.
+        word = rule.recurrence or "täglich"
+        return f"{word} ≤{rule.latest_time}" if rule.latest_time else word
     anchor = f"#{rule.reference_step}" if rule.reference_step else rule.anchor
     if rule.business_days is not None:
         core = f"≤{rule.business_days}WT"
