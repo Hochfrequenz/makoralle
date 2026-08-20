@@ -10,6 +10,7 @@ import yaml
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
 from makoralle.models.process import REF_PREFIX, is_known_actor, is_ref_step
+from makoralle.serialization.wsd import _span
 
 logger = logging.getLogger(__name__)
 
@@ -251,8 +252,10 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     # Only steps that actually render as a note: a "ref" with an unread endpoint stays a
     # self-message (its other end never named an actor), and a step with no lane at all is
     # dropped. Without that exclusion the legend announced a marker the diagram does not
-    # show -- live on reklamation_von_werten_beim_msb, whose three unread endpoints are all
-    # refs -- and the block is rendered for the WSD-SVG page too, not just the Mermaid one.
+    # show -- live on reklamation_von_werten_beim_msb's primary SD, whose three unread
+    # endpoints are all refs (a later SD of the same process does draw such a note). The
+    # block is rendered for the WSD-SVG page too, not just the Mermaid fallback, so a false
+    # entry was not confined to one output.
     has_unread_endpoint = any(_renders_as_unplaceable_note(step, participants) for step in steps)
     if not (has_tags or has_reference or has_complex or has_unread_endpoint):
         return []
@@ -306,7 +309,8 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
             # The source table already writes "ref …" in most of the corpus (239 steps of
             # the shipped dataset carry both markers), and prefixing those again produced
             # "7. ref ref Stammdatenänderung …" on every one of them.
-            body = message if REF_PREFIX.match((message or "").strip()) else f"ref {message}"
+            stripped_message = (message or "").strip()
+            body = stripped_message if REF_PREFIX.match(stripped_message) else f"ref {stripped_message}"
             label = f"{nr}. {body}"
         else:
             label = f"{nr}. {message}"
@@ -342,8 +346,7 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
             # Neither endpoint known: span the outermost lanes. Note over takes at most
             # two actors in Mermaid's grammar (actor_pair), so naming every lane would
             # break the whole diagram, not just this line.
-            span = known_lanes[0] if len(known_lanes) == 1 else f"{known_lanes[0]},{known_lanes[-1]}"
-            lines.append(f"    Note over {span}: (!) {label} — beide Endpunkte ungelesen")
+            lines.append(f"    Note over {_span(known_lanes)}: (!) {label} — beide Endpunkte ungelesen")
         else:
             logger.warning("dropping step %s from the Mermaid diagram: no lane is known", nr)
 

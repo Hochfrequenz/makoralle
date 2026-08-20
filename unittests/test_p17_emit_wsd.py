@@ -708,19 +708,39 @@ def test_a_subprocess_ref_without_the_ref_prefix_is_still_a_ref() -> None:
 
 def test_an_unresolved_note_anchor_is_dropped_not_named() -> None:
     """p12 leaves "?" in a note's anchor list when it cannot resolve it; ``note over ?``
-    places the same phantom lane."""
+    places the same phantom lane. With one anchor left the note keeps that anchor."""
     sd = SequenceDiagram(
         participants=["NB"],
         steps=[SDStep(nr=1, sender="NB", receiver="NB", message="A")],
         notes=[
             SDNote(text="Gilt für beide", participants=["NB", "?"], position="over", after_step=1),
-            SDNote(text="Ohne Anker", participants=["?"], position="over", after_step=1),
         ],
     )
     lines = emit_wsd(sd).splitlines()
     assert "note over NB: Gilt für beide" in lines
-    assert not [line for line in lines if "Ohne Anker" in line]
     assert not [line for line in lines if "?" in line]
+
+
+def test_a_note_whose_every_anchor_is_unresolved_spans_the_diagram() -> None:
+    """It must not disappear: makorele's p12 anchors its diagram-level "[REVIEW]" note on
+    the first participant precisely so emit_wsd keeps it, and a note that reaches no diagram
+    and no worklist is what the spanning rule exists to prevent."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[SDStep(nr=1, sender="NB", receiver="NB", message="A")],
+        notes=[SDNote(text="Trennung nicht möglich  [REVIEW]", participants=["?"], position="over", after_step=1)],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over NB,MSB: Trennung nicht möglich  [REVIEW]" in lines
+
+
+def test_a_note_with_no_anchor_and_no_lane_is_skipped() -> None:
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="A")],
+        notes=[SDNote(text="Ohne Anker", participants=["?"], position="over", after_step=1)],
+    )
+    assert not [line for line in emit_wsd(sd).splitlines() if "Ohne Anker" in line]
 
 
 def test_the_note_lands_inside_the_fragment_the_step_belongs_to() -> None:
@@ -766,3 +786,34 @@ def test_a_span_of_one_lane_names_it_alone() -> None:
     sd = SequenceDiagram(participants=["NB"], steps=[SDStep(nr=2, sender="?", receiver="?", message="Unklar")])
     note = next(line for line in emit_wsd(sd).splitlines() if line.startswith("note "))
     assert note == "note over NB: (!) 2. Unklar — beide Endpunkte ungelesen  [REVIEW]"
+
+
+def test_a_readable_colon_form_ref_keeps_the_arrow_the_document_draws() -> None:
+    """The historical ref shape is not changed by #78: seven shipped arrows read
+    "BIKO->>NB: 2. ref: Deaktivierung … vom BIKO an NB", and the ref's own title names the
+    receiver. Only a ref whose other endpoint was *not* read becomes a self-message."""
+    sd = SequenceDiagram(
+        participants=["BIKO", "NB"],
+        steps=[
+            SDStep(nr=2, sender="BIKO", receiver="NB", message="ref: Deaktivierung eines MaBiS-Zählpunkts"),
+            SDStep(nr=3, sender="BIKO", receiver="?", message="ref: Deaktivierung eines MaBiS-Zählpunkts"),
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "BIKO->>NB: 2. ref: Deaktivierung eines MaBiS-Zählpunkts" in lines
+    assert "BIKO->>BIKO: 3. ref: Deaktivierung eines MaBiS-Zählpunkts" in lines
+
+
+def test_a_deadline_note_keeps_its_historical_anchor() -> None:
+    """_deadline_note anchors a ref's Frist on the sender and everything else's on the
+    receiver, keyed on the "ref " prefix. The broader ref rule would move the note for a
+    step that carries only the other marker, which is not what #78 is about."""
+    step = SDStep(
+        nr=1,
+        sender="LF",
+        receiver="NB",
+        message="Aufbereitung",
+        subprocess_ref="aufbereitung",
+        deadline_rule=DeadlineRule(type="complex", raw="Gemäß irgendwas."),
+    )
+    assert _deadline_note(step, ["LF", "NB"]) == "note right of NB: (!) Frist: Gemäß irgendwas.  [REVIEW]"

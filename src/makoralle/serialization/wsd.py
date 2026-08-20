@@ -74,6 +74,11 @@ def _terminiert_core(rule: DeadlineRule) -> str:
     return "terminiert"
 
 
+def _has_ref_prefix(message: str | None) -> bool:
+    """Whether the message itself opens with the "ref " marker the step tables write."""
+    return (message or "").strip().lower().startswith("ref ")
+
+
 def _clean_note_text(text: str) -> str:
     """Collapse whitespace/newlines so raw Frist text is a single safe note line
     (the WSD parser treats newlines as statement breaks). See p17 escaping TODO."""
@@ -89,7 +94,10 @@ def _deadline_note(step: SDStep, participants: list[str]) -> str | None:
     dl = step.deadline_rule
     if not dl or dl.type not in ("complex", "reference") or not dl.raw:
         return None
-    if is_ref_step(step.message, step.subprocess_ref):
+    if _has_ref_prefix(step.message):
+        # The historical rule, on purpose: the broader is_ref_step would move this note
+        # from the receiver to the sender for a step that carries only the other marker,
+        # and where the note sits is not what #78 is about.
         who = _ref_lifeline(step, participants) or ""
     else:
         who = step.receiver if is_known_actor(step.receiver) else step.sender
@@ -232,16 +240,23 @@ def _ref_lifeline(step: SDStep, participants: list[str]) -> str | None:
     return next((cand for cand in (step.sender, step.receiver) if is_known_actor(cand)), None)
 
 
-def _emit_note(lines: list[str], note: SDNote) -> None:
+def _emit_note(lines: list[str], note: SDNote, known_lanes: list[str] | None = None) -> None:
     """Append a note line, skipping notes with no participants (Fix 3).
 
     An anchor the pipeline could not resolve is dropped from the anchor list rather than
     named: ``note over ?`` places the same phantom lane an arrow to "?" would (makorele#78).
-    A note left with no anchor at all is skipped, as an anchorless one always was.
+
+    When *every* anchor is unresolved the note spans the diagram instead of disappearing.
+    makorele's ``p12_link._review_note`` anchors its diagram-level ``[REVIEW]`` note on the
+    first participant precisely so that emit_wsd keeps it, and a note that reaches no
+    diagram and no worklist is the outcome :func:`_append_unplaceable` exists to avoid.
     """
     anchors = [p for p in note.participants if is_known_actor(p)]
+    if not anchors and known_lanes:
+        logger.warning("note %r has no readable anchor; spanning the diagram instead", note.text)
+        anchors = [_span(known_lanes)]
     if not anchors:
-        logger.debug("skipping note with no known participants: %r", note.text)
+        logger.warning("skipping note with no known participants: %r", note.text)
         return
     placement = _NOTE_PLACEMENT.get(note.position, "over")
     parts = ",".join(anchors)
@@ -269,14 +284,13 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
     if title:
         lines.append(f"title {title}")
     lines.append(f"# style: {style}")  # consumed by the render script, ignored by parser
-    for p in sd.participants:
-        # A "?" in the participant list would declare the very lane the notes below exist
-        # to avoid; makorele's p08 writes it when a diagram yielded no readable actor at
-        # all, and p12 leaves it in the note anchors it does not resolve (makorele#78).
-        if is_known_actor(p):
-            lines.append(f"participant {p}")
-
+    # Defensive: makorele's p12 already strips "?" from the participant list, and none of
+    # the 194 shipped processes declares it — but p08 does write participants=["?"] for a
+    # diagram in which it read no actor at all, and declaring that would place the very
+    # lane the notes below exist to avoid (makorele#78).
     known_lanes = [p for p in sd.participants if is_known_actor(p)]
+    for p in known_lanes:
+        lines.append(f"participant {p}")
     paths = _build_step_paths(sd.fragments)
     notes_by_step: dict[int | None, list[SDNote]] = {}
     for note in sd.notes:
@@ -285,7 +299,7 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
     # Unanchored notes (after_step is None) render as general diagram notes,
     # right after the participant block and before any step/fragment (Fix 1).
     for note in notes_by_step.get(None, []):
-        _emit_note(lines, note)
+        _emit_note(lines, note, known_lanes)
 
     current: list[tuple[SDFragment, int]] = []
     for step in sorted(sd.steps, key=lambda s: s.nr):
@@ -346,7 +360,17 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
         # can confuse the websequencediagrams parser on real data
         # (e.g. message="Frist: 5 WT"). Tracked as a follow-up.
         msg = step.message or ""
-        if is_ref_step(msg, step.subprocess_ref):
+        both_ends_known = is_known_actor(step.sender) and is_known_actor(step.receiver)
+        # Two ref rules, deliberately. The historical one keys on the "ref " prefix and
+        # decides the *shape* of a fully readable step; #78 must not change that, and
+        # widening it to is_ref_step turned 7 shipped arrows into self-messages —
+        # "BIKO->>NB: 2. ref: Deaktivierung … vom BIKO an NB" is drawn as the document
+        # draws it, receiver and all. The broader rule applies only where #78 is at issue:
+        # a ref whose *other* endpoint was not read never named a second actor, so it is a
+        # self-message on the lifeline it does name rather than a note about a missing
+        # counterpart. Unifying the shape for readable steps is a separate question, filed
+        # as makoralle#36.
+        if (is_ref_step(msg, step.subprocess_ref) and not both_ends_known) or _has_ref_prefix(msg):
             # A "ref" is a self-referenced subprocess on one lifeline, not a
             # message to another participant. Render as a self-message arrow
             # (lifeline->lifeline), which matches the source better than a box.
@@ -375,7 +399,7 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             lines.append(dl_note)
 
         for note in notes_by_step.get(step.nr, []):
-            _emit_note(lines, note)
+            _emit_note(lines, note, known_lanes)
 
     # Close any still-open fragments, rendering trailing empty alt branches.
     for frag, bi in reversed(current):

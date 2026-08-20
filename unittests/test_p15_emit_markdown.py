@@ -254,7 +254,8 @@ def test_mermaid_legend_stays_empty_for_a_clean_diagram() -> None:
 
 def test_mermaid_does_not_double_a_colon_form_ref_prefix() -> None:
     """The tables write the marker both ways; a check for "ref " alone left
-    "3. ref ref: Aktivierung eines MaBiS-Zählpunkts …" on five steps of the corpus."""
+    "3. ref ref: Aktivierung eines MaBiS-Zählpunkts …" on the 16 steps of the corpus
+    that write it that way (15 "ref:" and one "ref."), across 9 processes."""
     lines = _render_sequence_diagram(
         {
             "participants": ["ÜNB"],
@@ -273,7 +274,7 @@ def test_mermaid_does_not_double_a_colon_form_ref_prefix() -> None:
 
 
 def test_mermaid_does_not_double_the_ref_prefix() -> None:
-    """239 steps of the shipped dataset carry both markers — a parsed ``subprocess_ref``
+    """244 steps of the shipped dataset carry both markers — a parsed ``subprocess_ref``
     and a message that already opens with "ref " — and every one of them rendered as
     "7. ref ref Stammdatenänderung …"."""
     lines = _render_sequence_diagram(
@@ -324,7 +325,8 @@ def test_mermaid_drops_a_step_with_no_lane_at_all() -> None:
 def test_the_legend_stays_silent_when_every_unread_endpoint_is_a_ref() -> None:
     """A ref keeps its self-message, so the diagram carries no "(!) … ungelesen" note and
     the legend must not announce one. Live case: reklamation_von_werten_beim_msb, whose
-    three unread endpoints are all refs."""
+    three unread endpoints are all refs — its primary SD, that is; a later SD of the same
+    process has two non-ref "?" arrows and does get the line."""
     legend = _deadline_legend(
         {
             "participants": ["MSB", "NB"],
@@ -340,5 +342,14 @@ def test_the_legend_stays_silent_when_every_unread_endpoint_is_a_ref() -> None:
 def test_the_legend_announces_the_marker_when_a_note_is_really_drawn() -> None:
     legend = _deadline_legend(
         {"participants": ["MSB"], "steps": [{"nr": 4, "sender": "?", "receiver": "MSB", "message": "Anforderung"}]}
+    )
+    assert [line for line in legend if "unlesbarem Endpunkt" in line]
+
+
+def test_the_legend_announces_the_marker_for_a_both_ends_unread_step() -> None:
+    """The spanning case draws a note too, so the legend must cover it — reducing the
+    predicate to "has one known endpoint" would leave this diagram's marker undefined."""
+    legend = _deadline_legend(
+        {"participants": ["NB", "MSB"], "steps": [{"nr": 2, "sender": "?", "receiver": "?", "message": "Unklar"}]}
     )
     assert [line for line in legend if "unlesbarem Endpunkt" in line]
