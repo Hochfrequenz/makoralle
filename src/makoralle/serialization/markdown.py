@@ -1,5 +1,6 @@
 """Render process YAML into MkDocs-flavoured Markdown (with Mermaid diagrams)."""
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,10 @@ import yaml
 
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
+from makoralle.models.process import REF_PREFIX, is_known_actor, is_ref_step
+from makoralle.serialization.wsd import span_of_lanes
+
+logger = logging.getLogger(__name__)
 
 
 def _escape_mermaid(text: str) -> str:
@@ -219,17 +224,40 @@ def _pid_table(sd: dict[str, Any]) -> list[str]:
     ]
 
 
+def _renders_as_unplaceable_note(step: dict[str, Any], participants: list[str]) -> bool:
+    """Whether this step is drawn as a "(!) … ungelesen" note rather than as an arrow."""
+    sender, receiver = step.get("sender", ""), step.get("receiver", "")
+    if is_known_actor(sender) and is_known_actor(receiver):
+        return False
+    anchor = next((role for role in (sender, receiver) if is_known_actor(role)), None)
+    if is_ref_step(step.get("message"), step.get("subprocess_ref")) and anchor:
+        return False  # stays a self-message on the lifeline it names
+    return bool(anchor) or any(is_known_actor(p) for p in participants)
+
+
 def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     """A short vocabulary legend for the deadline tags/notes rendered on the SD
     image. Only the marker kinds actually present on this diagram are listed:
     inline tags (unverzüglich/parallel/terminiert), an (i) reference note, and/or
     a [REVIEW] note for a still-unstructured complex Frist."""
     steps = sd.get("steps", [])
+    participants = sd.get("participants", [])
     types = {(s.get("deadline_rule") or {}).get("type") for s in steps}
     has_tags = bool(types & {"unverzüglich", "parallel", "terminiert"})
     has_reference = "reference" in types
     has_complex = "complex" in types
-    if not (has_tags or has_reference or has_complex):
+    # The same "(!)" marker now also flags a step whose endpoint could not be read
+    # (makorele#78), and that step need not carry a deadline at all — without this the
+    # legend either omits the marker the diagram shows or defines it as a Frist it is not.
+    # Only steps that actually render as a note: a "ref" with an unread endpoint stays a
+    # self-message (its other end never named an actor), and a step with no lane at all is
+    # dropped. Without that exclusion the legend announced a marker the diagram does not
+    # show -- live on reklamation_von_werten_beim_msb's primary SD, whose three unread
+    # endpoints are all refs (a later SD of the same process does draw such a note). The
+    # block is rendered for the WSD-SVG page too, not just the Mermaid fallback, so a false
+    # entry was not confined to one output.
+    has_unread_endpoint = any(_renders_as_unplaceable_note(step, participants) for step in steps)
+    if not (has_tags or has_reference or has_complex or has_unread_endpoint):
         return []
     lines = ["**Fristen (Legende der Diagramm-Markierungen):**", ""]
     if has_tags:
@@ -246,6 +274,8 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
         )
     if has_complex:
         lines.append("- `(!) … [REVIEW]` (Notiz) — komplexe Frist, noch nicht strukturiert geparst")
+    if has_unread_endpoint:
+        lines.append("- `(!) … ungelesen` (Notiz) — Schritt mit unlesbarem Endpunkt, als Notiz statt als Pfeil")
     lines.append("")
     return lines
 
@@ -258,7 +288,10 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         return []
 
     lines = ["```mermaid", "sequenceDiagram"]
-    for p in participants:
+    # Same rule as emit_wsd: the "?" placeholder is not an actor, and naming it makes
+    # Mermaid draw a nameless lifeline beside the real ones (makorele#78).
+    known_lanes = [p for p in participants if is_known_actor(p)]
+    for p in known_lanes:
         lines.append(f"    participant {p}")
 
     for step in steps:
@@ -271,10 +304,19 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         pids = step.get("pid_refs", [])
 
         # Build message label
-        if subprocess_ref:
-            label = f"{nr}. ref {message}"
-        else:
-            label = f"{nr}. {message}"
+        is_ref = is_ref_step(message, subprocess_ref)
+        stripped_message = (message or "").strip()
+        # The source tables already write "ref …" in most of the corpus (244 steps of the
+        # shipped dataset carry both markers), and prefixing those again produced
+        # "7. ref ref Stammdatenänderung …" on every one of them.
+        needs_prefix = bool(subprocess_ref) and not REF_PREFIX.match(stripped_message)
+        label = f"{nr}. ref {stripped_message}" if needs_prefix else f"{nr}. {stripped_message}"
+        # Keyed on subprocess_ref, not on is_ref_step: a parsed subprocess call has never
+        # carried its format and PIDs in the label, while a step that merely *writes*
+        # "ref …" always has. Keying the omission on the message would drop them the first
+        # time the pipeline attaches a PID to such a step — invisible in today's corpus,
+        # where none of the 91 prefix-only refs carries one.
+        if not subprocess_ref:
             if fmt:
                 label += f" [{fmt}]"
             if pids:
@@ -285,9 +327,31 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         # head distinction has no clean Mermaid equivalent, so it is not carried here.
         arrow = "-->>" if step.get("line") == "dashed" else "->>"
 
-        lines.append(f"    {sender}{arrow}+{receiver}: {label}")
-        if subprocess_ref and sender != receiver:
-            lines.append(f"    Note right of {receiver}: Subprocess call")
+        anchor = next((role for role in (sender, receiver) if is_known_actor(role)), None)
+        if is_known_actor(sender) and is_known_actor(receiver):
+            lines.append(f"    {sender}{arrow}+{receiver}: {label}")
+            if subprocess_ref and sender != receiver:
+                lines.append(f"    Note right of {receiver}: Subprocess call")
+        elif is_ref and anchor:
+            # A "ref" is a subprocess box on one lifeline, so its other endpoint never
+            # named an actor: it stays the self-message the .wsd emitter draws, rather
+            # than becoming a note that reports a missing counterpart it never had.
+            lines.append(f"    {anchor}{arrow}+{anchor}: {label}")
+        elif anchor:
+            # An endpoint the pipeline could not read: say the step and leave the other
+            # side open, rather than drawing an arrow to a lane that stands for
+            # "unknown". The .wsd rendering does the same, with a [REVIEW] flag the
+            # webapp's worklist picks up; this document has no such worklist, so the
+            # marker is plain text. Which side is missing is left unsaid on purpose —
+            # see _unknown_endpoint_note in the .wsd emitter.
+            lines.append(f"    Note over {anchor}: (!) {label} — Gegenstelle ungelesen")
+        elif known_lanes:
+            # Neither endpoint known: span the outermost lanes. Note over takes at most
+            # two actors in Mermaid's grammar (actor_pair), so naming every lane would
+            # break the whole diagram, not just this line.
+            lines.append(f"    Note over {span_of_lanes(known_lanes)}: (!) {label} — beide Endpunkte ungelesen")
+        else:
+            logger.warning("dropping step %s from the Mermaid diagram: no lane is known", nr)
 
     lines.append("```")
     return lines

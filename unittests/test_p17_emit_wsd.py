@@ -1,5 +1,6 @@
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
 from makoralle.serialization.wsd import _deadline_note, _deadline_tag, emit_wsd
+from makoralle.webapp_export import extract_review_notes
 
 
 def _step_with_deadline(rule: DeadlineRule) -> SDStep:
@@ -526,3 +527,293 @@ def test_emit_complex_deadline_note_on_ref_step_uses_sender_lifeline() -> None:
     )
     lines = emit_wsd(sd).splitlines()
     assert "note right of NB: (!) Frist: komplexe Frist  [REVIEW]" in lines
+
+
+# --- an endpoint the pipeline could not read (makorele#78) -------------------------
+#
+# Both cases are real, from the dataset built off bnetza_bk6_mirror run 32251397627:
+#
+# The shipped corpus has 16 "?" endpoints: 11 on ``ref`` steps, where the other end never
+# named an actor, and 5 on real arrows, across three processes. Two of the five are read
+# below; the third process, reklamation_von_werten_beim_msb, carries the other three
+# (``?->>MSB: 3. Reklamation Wert einer Messlokation`` and ``?->>ÜNB: 3. Stornierung an
+# ÜNB`` in msb_der_messlokation_stellt_selbst_reklamationsbedarf_fest), which nobody has
+# read against the source diagram yet — see makorele#96.
+#
+#   bestellung_einer_konfiguration_vom_nb_oder_lf_an_msb, step 10  MSB->>?
+#       GPKE Teil 3, UC 1.3.3.1, diagram in 1.3.3.2 (pp. 47-48). It draws a "weiterer MSB" lane and Vision even read
+#       it into the participant list as "MSB (weiterer)" — only the arrow's endpoint was
+#       left unread.
+#   anforderung_von_zwischenablesungswerten, step 4               ?->>MSB
+#       WiM Teil 2 2.6.3, p. 40. The diagram draws two lifelines both labelled ":MSB",
+#       told apart by their notes ("entspricht MSB am Objekt Marktlokation" / "… am
+#       Objekt Messlokation"); the step runs from the one to the other. The two lanes
+#       collapsed into one, so the sender had nothing left to point at.
+#
+# Neither "?" is a property of the source: both are defects to repair in the data, which
+# is why the note carries [REVIEW] rather than quietly documenting an unknown actor.
+
+
+def test_unread_receiver_becomes_a_flagged_note_on_the_sender() -> None:
+    """The note names the endpoint that survived and says nothing about which side is
+    missing: when two identically labelled lanes collapse, which endpoint keeps the role
+    is arbitrary — for the WiM 2.6.3 step below the source has the *receiver* unplaced
+    while the YAML says ``sender="?"``."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB", "MSB (weiterer)", "ÜNB"],
+        steps=[SDStep(nr=10, sender="MSB", receiver="?", message="Mitteilung über Gesamtvorgang")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over MSB: (!) 10. Mitteilung über Gesamtvorgang — Gegenstelle ungelesen  [REVIEW]" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_unread_sender_becomes_a_flagged_note_on_the_receiver() -> None:
+    sd = SequenceDiagram(
+        participants=["NB", "LF", "MSB"],
+        steps=[SDStep(nr=4, sender="?", receiver="MSB", message="Anforderung Wert einer Messlokation")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over MSB: (!) 4. Anforderung Wert einer Messlokation — Gegenstelle ungelesen  [REVIEW]" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_the_note_keeps_the_step_annotations() -> None:
+    """Format, PIDs, EBD and deadline tag say what the step is; losing them with the
+    arrow would make the note less informative than the defect it reports."""
+    sd = SequenceDiagram(
+        participants=["MSB"],
+        steps=[
+            SDStep(
+                nr=10,
+                sender="MSB",
+                receiver="?",
+                message="Mitteilung über Gesamtvorgang",
+                format="UTILMD",
+                pid_refs=[55001],
+                ebd_ref="E_0401",
+                deadline_rule=DeadlineRule(type="unverzüglich"),
+            )
+        ],
+    )
+    note = next(line for line in emit_wsd(sd).splitlines() if line.startswith("note "))
+    assert note == (
+        "note over MSB: (!) 10. Mitteilung über Gesamtvorgang (UTILMD 55001) [E_0401] {u} "
+        "— Gegenstelle ungelesen  [REVIEW]"
+    )
+
+
+def test_a_step_with_two_known_endpoints_is_still_an_arrow() -> None:
+    """The boundary: nothing about a readable step changes."""
+    sd = SequenceDiagram(
+        participants=["LF", "NB"],
+        steps=[SDStep(nr=1, sender="LF", receiver="NB", message="Anmeldung")],
+    )
+    assert "LF->>NB: 1. Anmeldung" in emit_wsd(sd).splitlines()
+
+
+def test_a_step_with_neither_endpoint_known_spans_the_declared_lanes() -> None:
+    """Picking one lane would file the step under an actor it may have nothing to do
+    with, so the note spans the diagram (its outermost two lanes). It is flagged like the one-sided case: this step is
+    worse off, not better, and the webapp lists it in the step table either way — a silent
+    drop would leave a step that appears in no diagram and on no worklist."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[
+            SDStep(nr=1, sender="NB", receiver="NB", message="Bekannt"),
+            SDStep(nr=2, sender="?", receiver="?", message="Beide Enden ungelesen"),
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "NB->>NB: 1. Bekannt" in lines
+    assert "note over NB,MSB: (!) 2. Beide Enden ungelesen — beide Endpunkte ungelesen  [REVIEW]" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_a_step_with_neither_endpoint_nor_any_lane_is_dropped() -> None:
+    """Nothing left to hang a note on — a diagram in which no actor was read at all."""
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=2, sender="?", receiver="?", message="Beide Enden ungelesen")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert not [line for line in lines if "Beide Enden ungelesen" in line]
+    assert not [line for line in lines if "?" in line]
+
+
+def test_the_placeholder_is_never_declared_as_a_participant() -> None:
+    """makorele's p08 writes ``participants=["?"]`` for a diagram in which it could read
+    no actor at all; declaring it is the same phantom lane by another route."""
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="A")],
+    )
+    assert not [line for line in emit_wsd(sd).splitlines() if "?" in line]
+
+
+def test_a_ref_step_with_one_unread_endpoint_stays_a_self_arrow() -> None:
+    """A ``ref`` is a subprocess box on one lifeline, so an unread *other* endpoint costs
+    nothing — it never named a second actor. This is the majority of the "?" endpoints in
+    the corpus: 11 of the 16, spread over the same three processes that carry the 5
+    non-ref ones."""
+    sd = SequenceDiagram(
+        participants=["MSB"],
+        steps=[SDStep(nr=9, sender="MSB", receiver="?", message="ref Aufbereitung und Übermittlung von Werten")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "MSB->>MSB: 9. ref Aufbereitung und Übermittlung von Werten" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_a_ref_step_with_no_lifeline_at_all_is_dropped() -> None:
+    """With no lane to fall back on either, the self-arrow would be "?->>?" — two phantom
+    lanes for one step."""
+    sd = SequenceDiagram(participants=["?"], steps=[SDStep(nr=1, sender="?", receiver="?", message="ref Etwas")])
+    assert not [line for line in emit_wsd(sd).splitlines() if "?" in line]
+
+
+def test_a_ref_step_that_names_no_endpoint_is_not_filed_under_a_random_lane() -> None:
+    """_ref_lifeline used to fall back to the first participant, which files the box under
+    an actor it may have nothing to do with — the very thing the non-ref path refuses. It
+    is spanned like any other unplaceable step instead."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="ref Etwas")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over NB,MSB: (!) 1. ref Etwas — beide Endpunkte ungelesen  [REVIEW]" in lines
+    assert not [line for line in lines if line.startswith("NB->>NB")]
+
+
+def test_a_subprocess_ref_without_the_ref_prefix_is_still_a_ref() -> None:
+    """The two markers do not always agree — ``subprocess_ref`` is set and the message does
+    not open with "ref " — and both serializers must read them alike, or the same step is a
+    self-message in one output and a note about a missing counterpart in the other."""
+    sd = SequenceDiagram(
+        participants=["MSB"],
+        steps=[
+            SDStep(
+                nr=2,
+                sender="MSB",
+                receiver="?",
+                message="Aufbereitung und Übermittlung von Werten",
+                subprocess_ref="aufbereitung_und_übermittlung_von_werten",
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "MSB->>MSB: 2. Aufbereitung und Übermittlung von Werten" in lines
+    assert not [line for line in lines if "ungelesen" in line]
+
+
+def test_an_unresolved_note_anchor_is_dropped_not_named() -> None:
+    """p12 leaves "?" in a note's anchor list when it cannot resolve it; ``note over ?``
+    places the same phantom lane. With one anchor left the note keeps that anchor."""
+    sd = SequenceDiagram(
+        participants=["NB"],
+        steps=[SDStep(nr=1, sender="NB", receiver="NB", message="A")],
+        notes=[
+            SDNote(text="Gilt für beide", participants=["NB", "?"], position="over", after_step=1),
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over NB: Gilt für beide" in lines
+    assert not [line for line in lines if "?" in line]
+
+
+def test_a_note_whose_every_anchor_is_unresolved_spans_the_diagram() -> None:
+    """It must not disappear: makorele's p12 anchors its diagram-level "[REVIEW]" note on
+    the first participant precisely so emit_wsd keeps it, and a note that reaches no diagram
+    and no worklist is what the spanning rule exists to prevent."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[SDStep(nr=1, sender="NB", receiver="NB", message="A")],
+        notes=[SDNote(text="Trennung nicht möglich  [REVIEW]", participants=["?"], position="over", after_step=1)],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over NB,MSB: Trennung nicht möglich  [REVIEW]" in lines
+
+
+def test_a_note_with_no_anchor_and_no_lane_is_skipped() -> None:
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="A")],
+        notes=[SDNote(text="Ohne Anker", participants=["?"], position="over", after_step=1)],
+    )
+    assert not [line for line in emit_wsd(sd).splitlines() if "Ohne Anker" in line]
+
+
+def test_the_note_lands_inside_the_fragment_the_step_belongs_to() -> None:
+    """The note replaces the arrow in place, so a step inside an ``alt`` stays inside it —
+    both real cases sit in a branch (step 4 of 2.6.3 is in the "[Werte auf der
+    Messlokation werden benötigt]" alt)."""
+    sd = SequenceDiagram(
+        participants=["MSB"],
+        steps=[
+            SDStep(nr=1, sender="MSB", receiver="MSB", message="A"),
+            SDStep(nr=4, sender="?", receiver="MSB", message="Anforderung Wert einer Messlokation"),
+        ],
+        fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Werte benötigt", step_nrs=[4])])],
+    )
+    lines = emit_wsd(sd).splitlines()
+    note_idx = next(i for i, line in enumerate(lines) if line.startswith("note over MSB: (!) 4."))
+    assert lines.index("alt Werte benötigt") < note_idx < lines.index("end")
+
+
+def test_a_review_note_from_an_unread_endpoint_reaches_the_worklist() -> None:
+    """End to end with the consumer: ``extract_review_notes`` builds the "Prüfung nötig"
+    list the webapp shows, and an unread endpoint belongs on it."""
+    sd = SequenceDiagram(
+        participants=["MSB"],
+        steps=[SDStep(nr=10, sender="MSB", receiver="?", message="Mitteilung über Gesamtvorgang")],
+    )
+    assert extract_review_notes(emit_wsd(sd)) == ["(!) 10. Mitteilung über Gesamtvorgang — Gegenstelle ungelesen"]
+
+
+def test_a_span_names_two_lanes_however_many_are_declared() -> None:
+    """``note over`` takes one or two participants — Mermaid's grammar says so outright
+    and the websequencediagrams reference shows no more — so spanning every lane of a
+    four-lane diagram would break the diagram rather than the line."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB", "MSB (weiterer)", "ÜNB"],
+        steps=[SDStep(nr=2, sender="?", receiver="?", message="Unklar")],
+    )
+    note = next(line for line in emit_wsd(sd).splitlines() if line.startswith("note "))
+    assert note == "note over NB,ÜNB: (!) 2. Unklar — beide Endpunkte ungelesen  [REVIEW]"
+
+
+def test_a_span_of_one_lane_names_it_alone() -> None:
+    sd = SequenceDiagram(participants=["NB"], steps=[SDStep(nr=2, sender="?", receiver="?", message="Unklar")])
+    note = next(line for line in emit_wsd(sd).splitlines() if line.startswith("note "))
+    assert note == "note over NB: (!) 2. Unklar — beide Endpunkte ungelesen  [REVIEW]"
+
+
+def test_a_readable_colon_form_ref_keeps_the_arrow_the_document_draws() -> None:
+    """The historical ref shape is not changed by #78: seven shipped arrows read
+    "BIKO->>NB: 2. ref: Deaktivierung … vom BIKO an NB", and the ref's own title names the
+    receiver. Only a ref whose other endpoint was *not* read becomes a self-message."""
+    sd = SequenceDiagram(
+        participants=["BIKO", "NB"],
+        steps=[
+            SDStep(nr=2, sender="BIKO", receiver="NB", message="ref: Deaktivierung eines MaBiS-Zählpunkts"),
+            SDStep(nr=3, sender="BIKO", receiver="?", message="ref: Deaktivierung eines MaBiS-Zählpunkts"),
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "BIKO->>NB: 2. ref: Deaktivierung eines MaBiS-Zählpunkts" in lines
+    assert "BIKO->>BIKO: 3. ref: Deaktivierung eines MaBiS-Zählpunkts" in lines
+
+
+def test_a_deadline_note_keeps_its_historical_anchor() -> None:
+    """_deadline_note anchors a ref's Frist on the sender and everything else's on the
+    receiver, keyed on the "ref " prefix. The broader ref rule would move the note for a
+    step that carries only the other marker, which is not what #78 is about."""
+    step = SDStep(
+        nr=1,
+        sender="LF",
+        receiver="NB",
+        message="Aufbereitung",
+        subprocess_ref="aufbereitung",
+        deadline_rule=DeadlineRule(type="complex", raw="Gemäß irgendwas."),
+    )
+    assert _deadline_note(step, ["LF", "NB"]) == "note right of NB: (!) Frist: Gemäß irgendwas.  [REVIEW]"

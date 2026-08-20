@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
@@ -21,6 +22,49 @@ class DeadlineRule(BaseModel):
     anchor: str | None = None  # external anchor when it is not a step ("Änderungstermin", "Zahlungsziel", …)
     recurring: bool = False  # "täglich …" recurring obligation
     raw: str = ""  # original free-text deadline
+
+
+#: What the pipeline writes for an endpoint it could not read: neither the step's action
+#: text nor Vision named the actor (makorele p08 ``extract_roles_from_action``). It is a
+#: placeholder, not a name — every consumer that reasons about actors already skips it,
+#: but a serializer that draws a lifeline per actor has no such notion: naming it makes
+#: the renderer place a lane called "?" that no participant list declares and that a
+#: reader cannot tell from a real actor (makorele#78).
+UNKNOWN_ENDPOINT = "?"
+
+
+def is_known_actor(role: str | None) -> bool:
+    """True if ``role`` names an actor rather than standing in for one we could not read.
+
+    Lives beside the fields it judges, because it is a property of the model rather than
+    of one output dialect: the WSD and the Mermaid serializer both need the same rule.
+
+    ``"NB"`` is an actor; ``"?"`` and ``""`` are not.
+    """
+    return bool(role) and role != UNKNOWN_ENDPOINT
+
+
+#: "ref Aufbereitung …" and "ref: Aktivierung …" — the source tables write the marker both
+#: ways, and a check for "ref " alone missed the colon form.
+REF_PREFIX = re.compile(r"^ref\b", re.I)
+
+
+def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
+    """True if the step is a reference to a subprocess rather than a message to an actor.
+
+    Two markers say so and they do not always agree: the parsed ``subprocess_ref``, and a
+    message that opens with "ref" as the source tables write it (with a space, a colon or a
+    dot). Both serializers read this when deciding what an *unread* endpoint means — a ref's
+    other end never named an actor, so it must not become a note about a missing
+    counterpart in one output and a self-message in the other.
+
+    The *shape* of a fully readable ref step is a separate question, and the two emitters
+    still differ there: WSD draws a self-message for the "ref " form only, Mermaid an arrow
+    plus a "Subprocess call" note. 13 shipped steps show the difference. Unifying it would
+    reshape 7 arrows whose ref title names their receiver, so it is a decision about the
+    diagram rather than a cleanup — makoralle#36.
+    """
+    return bool(subprocess_ref) or bool(REF_PREFIX.match((message or "").strip()))
 
 
 class SDStep(BaseModel):
