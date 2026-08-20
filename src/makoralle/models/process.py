@@ -21,6 +21,13 @@ class DeadlineRule(BaseModel):
     direction: Literal["vor", "nach"] | None = None  # WT count before/after the anchor
     anchor: str | None = None  # external anchor when it is not a step ("Änderungstermin", "Zahlungsziel", …)
     recurring: bool = False  # "täglich …" recurring obligation
+    #: How often, in the source's own word: "täglich" or "werktäglich". A bool cannot tell the
+    #: two apart, and rendering both as "täglich" claims a weekend obligation the source does
+    #: not impose — MaBiS's Netzgangzeitreihe says "Werktäglich für den Vortag bzw. Vortage bis
+    #: 12:00 Uhr", and two shipped steps read it as a daily duty (makorele#101). Kept beside
+    #: ``recurring`` rather than replacing it, so a dataset written before this field still
+    #: parses; readers that only ask "is it recurring?" need no change.
+    recurrence: str | None = None
     raw: str = ""  # original free-text deadline
 
 

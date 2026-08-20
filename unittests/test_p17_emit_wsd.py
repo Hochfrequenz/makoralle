@@ -817,3 +817,31 @@ def test_a_deadline_note_keeps_its_historical_anchor() -> None:
         deadline_rule=DeadlineRule(type="complex", raw="Gemäß irgendwas."),
     )
     assert _deadline_note(step, ["LF", "NB"]) == "note right of NB: (!) Frist: Gemäß irgendwas.  [REVIEW]"
+
+
+def test_deadline_tag_says_werktaeglich_when_the_source_does() -> None:
+    """ "täglich" for a werktäglich obligation is not a shortening — it adds the weekend.
+
+    MaBiS's Netzgangzeitreihe reads "Werktäglich für den Vortag bzw. Vortage bis 12:00 Uhr", and
+    two shipped steps rendered it as "{täglich ≤12:00}", claiming a duty on Saturdays and
+    Sundays that the source does not impose (makorele#101).
+    """
+    werktaeglich = DeadlineRule(
+        type="terminiert",
+        recurring=True,
+        recurrence="werktäglich",
+        latest_time="12:00",
+        raw="Werktäglich für den Vortag bzw. Vortage bis 12:00 Uhr.",
+    )
+    assert _deadline_tag(werktaeglich) == "{werktäglich ≤12:00}"
+    taeglich = DeadlineRule(
+        type="terminiert", recurring=True, recurrence="täglich", latest_time="13:00", raw="Täglich … 13:00 Uhr."
+    )
+    assert _deadline_tag(taeglich) == "{täglich ≤13:00}"
+    # a rule written before the field existed still renders as it did
+    legacy = DeadlineRule(type="terminiert", recurring=True, latest_time="14:00", raw="Täglich … 14 Uhr.")
+    assert _deadline_tag(legacy) == "{täglich ≤14:00}"
+    # and without a time, the granularity alone
+    assert _deadline_tag(DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")) == (
+        "{werktäglich}"
+    )

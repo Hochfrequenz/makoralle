@@ -191,3 +191,13 @@ def test_process_holds_multiple_diagrams_and_primary_alias() -> None:
     # backward-compat: primary alias is the first diagram as a plain SequenceDiagram
     assert p.sequence_diagram is not None
     assert p.sequence_diagram.steps[0].message == "x"
+
+
+def test_recurrence_is_optional_so_older_datasets_still_parse() -> None:
+    """`recurring` stays a bool: a dataset written before `recurrence` existed must still load."""
+    old = DeadlineRule.model_validate({"type": "terminiert", "recurring": True, "latest_time": "14:00", "raw": "…"})
+    assert old.recurring is True
+    assert old.recurrence is None
+    # and the new field survives a round trip
+    new = DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")
+    assert DeadlineRule.model_validate(new.model_dump()).recurrence == "werktäglich"
