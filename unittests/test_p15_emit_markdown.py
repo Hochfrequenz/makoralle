@@ -254,8 +254,8 @@ def test_mermaid_legend_stays_empty_for_a_clean_diagram() -> None:
 
 def test_mermaid_does_not_double_a_colon_form_ref_prefix() -> None:
     """The tables write the marker both ways; a check for "ref " alone left
-    "3. ref ref: Aktivierung eines MaBiS-Zählpunkts …" on the 16 steps of the corpus
-    that write it that way (15 "ref:" and one "ref."), across 9 processes."""
+    "3. ref ref: Aktivierung eines MaBiS-Zählpunkts …". 16 steps of the corpus write the
+    marker that way (15 "ref:", one "ref."), of the 5 that also carry a subprocess_ref."""
     lines = _render_sequence_diagram(
         {
             "participants": ["ÜNB"],
@@ -353,3 +353,27 @@ def test_the_legend_announces_the_marker_for_a_both_ends_unread_step() -> None:
         {"participants": ["NB", "MSB"], "steps": [{"nr": 2, "sender": "?", "receiver": "?", "message": "Unklar"}]}
     )
     assert [line for line in legend if "unlesbarem Endpunkt" in line]
+
+
+def test_mermaid_keeps_the_annotations_of_a_step_that_only_writes_the_ref_marker() -> None:
+    """A parsed subprocess call has never carried its format and PIDs in the label; a step
+    that merely *writes* "ref …" always has. Keying the omission on the message instead of
+    on subprocess_ref would drop them the first time the pipeline attaches a PID to such a
+    step — invisible today, because none of the corpus's 91 prefix-only refs has one."""
+    step = {"nr": 1, "sender": "NB", "receiver": "MSB", "message": "ref X", "format": "UTILMD", "pid_refs": [55001]}
+    lines = _render_sequence_diagram({"participants": ["NB", "MSB"], "steps": [step]})
+    assert "    NB->>+MSB: 1. ref X [UTILMD] (PID:55001)" in lines
+
+
+def test_mermaid_omits_the_annotations_of_a_parsed_subprocess_call() -> None:
+    step = {
+        "nr": 1,
+        "sender": "NB",
+        "receiver": "MSB",
+        "message": "ref X",
+        "subprocess_ref": "x",
+        "format": "UTILMD",
+        "pid_refs": [55001],
+    }
+    lines = _render_sequence_diagram({"participants": ["NB", "MSB"], "steps": [step]})
+    assert "    NB->>+MSB: 1. ref X" in lines

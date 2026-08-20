@@ -98,7 +98,7 @@ def _deadline_note(step: SDStep, participants: list[str]) -> str | None:
         # The historical rule, on purpose: the broader is_ref_step would move this note
         # from the receiver to the sender for a step that carries only the other marker,
         # and where the note sits is not what #78 is about.
-        who = _ref_lifeline(step, participants) or ""
+        who = _ref_lifeline(step) or ""
     else:
         who = step.receiver if is_known_actor(step.receiver) else step.sender
     if not is_known_actor(who):
@@ -208,10 +208,11 @@ def _append_unplaceable(lines: list[str], text: str, known_lanes: list[str], nr:
     if not known_lanes:
         logger.warning("dropping step %s from the diagram: no endpoint and no lane is known", nr)
         return
-    lines.append(f"note over {_span(known_lanes)}: (!) {_clean_note_text(text)} — beide Endpunkte ungelesen  [REVIEW]")
+    body = _clean_note_text(text)
+    lines.append(f"note over {span_of_lanes(known_lanes)}: (!) {body} — beide Endpunkte ungelesen  [REVIEW]")
 
 
-def _span(lanes: list[str]) -> str:
+def span_of_lanes(lanes: list[str]) -> str:
     """The lane list for a note that belongs to no single actor: the outermost two.
 
     Not every lane: ``note over`` takes one or two participants — Mermaid's grammar says
@@ -223,20 +224,16 @@ def _span(lanes: list[str]) -> str:
     return lanes[0] if len(lanes) == 1 else f"{lanes[0]},{lanes[-1]}"
 
 
-def _ref_lifeline(step: SDStep, participants: list[str]) -> str | None:
+def _ref_lifeline(step: SDStep) -> str | None:
     """The lifeline a subprocess-reference box sits on: the sender, else the receiver.
 
     ``None`` when the step names neither — the caller then treats it like any other step
     with no readable endpoint instead of picking a lane. It used to fall back to the first
     participant, which files the step under an actor it may have nothing to do with; that
     is exactly what the non-ref path refuses to do (makorele#78), and a ``ref`` box is no
-    more attributable than an arrow.
-
-    ``participants`` is kept in the signature because :func:`_deadline_note` passes it and
-    reads the result the same way; nothing in it can name the lifeline of a step that does
-    not name it itself.
+    more attributable than an arrow. Hence no ``participants`` argument any more: there was
+    nothing left for it to contribute.
     """
-    del participants  # see above: no lane may stand in for an unnamed one
     return next((cand for cand in (step.sender, step.receiver) if is_known_actor(cand)), None)
 
 
@@ -254,7 +251,7 @@ def _emit_note(lines: list[str], note: SDNote, known_lanes: list[str] | None = N
     anchors = [p for p in note.participants if is_known_actor(p)]
     if not anchors and known_lanes:
         logger.warning("note %r has no readable anchor; spanning the diagram instead", note.text)
-        anchors = [_span(known_lanes)]
+        anchors = [span_of_lanes(known_lanes)]
     if not anchors:
         logger.warning("skipping note with no known participants: %r", note.text)
         return
@@ -376,7 +373,7 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             # (lifeline->lifeline), which matches the source better than a box.
             # Vision often mis-guesses a different receiver for these (e.g. NB->LFA
             # for an NB self-reference), so loop on the sender's lifeline.
-            lifeline = _ref_lifeline(step, sd.participants)
+            lifeline = _ref_lifeline(step)
             if lifeline:
                 lines.append(f"{lifeline}{_arrow(step)}{lifeline}: {step.nr}. {msg}{suffix}")
             else:

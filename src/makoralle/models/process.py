@@ -53,9 +53,16 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     """True if the step is a reference to a subprocess rather than a message to an actor.
 
     Two markers say so and they do not always agree: the parsed ``subprocess_ref``, and a
-    message that opens with "ref " as the source table writes it. Both serializers have to
-    read them the same way, or the same step is a self-message in one output and a note
-    about a missing counterpart in the other.
+    message that opens with "ref" as the source tables write it (with a space, a colon or a
+    dot). Both serializers read this when deciding what an *unread* endpoint means — a ref's
+    other end never named an actor, so it must not become a note about a missing
+    counterpart in one output and a self-message in the other.
+
+    The *shape* of a fully readable ref step is a separate question, and the two emitters
+    still differ there: WSD draws a self-message for the "ref " form only, Mermaid an arrow
+    plus a "Subprocess call" note. 13 shipped steps show the difference. Unifying it would
+    reshape 7 arrows whose ref title names their receiver, so it is a decision about the
+    diagram rather than a cleanup — makoralle#36.
     """
     return bool(subprocess_ref) or bool(REF_PREFIX.match((message or "").strip()))
 

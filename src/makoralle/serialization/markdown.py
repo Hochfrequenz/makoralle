@@ -10,7 +10,7 @@ import yaml
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
 from makoralle.models.process import REF_PREFIX, is_known_actor, is_ref_step
-from makoralle.serialization.wsd import _span
+from makoralle.serialization.wsd import span_of_lanes
 
 logger = logging.getLogger(__name__)
 
@@ -305,15 +305,18 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
 
         # Build message label
         is_ref = is_ref_step(message, subprocess_ref)
-        if is_ref:
-            # The source table already writes "ref …" in most of the corpus (239 steps of
-            # the shipped dataset carry both markers), and prefixing those again produced
-            # "7. ref ref Stammdatenänderung …" on every one of them.
-            stripped_message = (message or "").strip()
-            body = stripped_message if REF_PREFIX.match(stripped_message) else f"ref {stripped_message}"
-            label = f"{nr}. {body}"
-        else:
-            label = f"{nr}. {message}"
+        stripped_message = (message or "").strip()
+        # The source tables already write "ref …" in most of the corpus (244 steps of the
+        # shipped dataset carry both markers), and prefixing those again produced
+        # "7. ref ref Stammdatenänderung …" on every one of them.
+        needs_prefix = bool(subprocess_ref) and not REF_PREFIX.match(stripped_message)
+        label = f"{nr}. ref {stripped_message}" if needs_prefix else f"{nr}. {stripped_message}"
+        # Keyed on subprocess_ref, not on is_ref_step: a parsed subprocess call has never
+        # carried its format and PIDs in the label, while a step that merely *writes*
+        # "ref …" always has. Keying the omission on the message would drop them the first
+        # time the pipeline attaches a PID to such a step — invisible in today's corpus,
+        # where none of the 91 prefix-only refs carries one.
+        if not subprocess_ref:
             if fmt:
                 label += f" [{fmt}]"
             if pids:
@@ -346,7 +349,7 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
             # Neither endpoint known: span the outermost lanes. Note over takes at most
             # two actors in Mermaid's grammar (actor_pair), so naming every lane would
             # break the whole diagram, not just this line.
-            lines.append(f"    Note over {_span(known_lanes)}: (!) {label} — beide Endpunkte ungelesen")
+            lines.append(f"    Note over {span_of_lanes(known_lanes)}: (!) {label} — beide Endpunkte ungelesen")
         else:
             logger.warning("dropping step %s from the Mermaid diagram: no lane is known", nr)
 
