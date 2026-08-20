@@ -614,7 +614,7 @@ def test_a_step_with_two_known_endpoints_is_still_an_arrow() -> None:
 
 def test_a_step_with_neither_endpoint_known_spans_the_declared_lanes() -> None:
     """Picking one lane would file the step under an actor it may have nothing to do
-    with, so the note spans them all. It is flagged like the one-sided case: this step is
+    with, so the note spans the diagram (its outermost two lanes). It is flagged like the one-sided case: this step is
     worse off, not better, and the webapp lists it in the step table either way — a silent
     drop would leave a step that appears in no diagram and on no worklist."""
     sd = SequenceDiagram(
@@ -666,10 +666,44 @@ def test_a_ref_step_with_one_unread_endpoint_stays_a_self_arrow() -> None:
 
 
 def test_a_ref_step_with_no_lifeline_at_all_is_dropped() -> None:
-    """``_ref_lifeline`` falls back to the first participant; when that is the placeholder
-    too, the self-arrow would be "?->>?" — two phantom lanes for one step."""
+    """With no lane to fall back on either, the self-arrow would be "?->>?" — two phantom
+    lanes for one step."""
     sd = SequenceDiagram(participants=["?"], steps=[SDStep(nr=1, sender="?", receiver="?", message="ref Etwas")])
     assert not [line for line in emit_wsd(sd).splitlines() if "?" in line]
+
+
+def test_a_ref_step_that_names_no_endpoint_is_not_filed_under_a_random_lane() -> None:
+    """_ref_lifeline used to fall back to the first participant, which files the box under
+    an actor it may have nothing to do with — the very thing the non-ref path refuses. It
+    is spanned like any other unplaceable step instead."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="ref Etwas")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over NB,MSB: (!) 1. ref Etwas — beide Endpunkte ungelesen  [REVIEW]" in lines
+    assert not [line for line in lines if line.startswith("NB->>NB")]
+
+
+def test_a_subprocess_ref_without_the_ref_prefix_is_still_a_ref() -> None:
+    """The two markers do not always agree — ``subprocess_ref`` is set and the message does
+    not open with "ref " — and both serializers must read them alike, or the same step is a
+    self-message in one output and a note about a missing counterpart in the other."""
+    sd = SequenceDiagram(
+        participants=["MSB"],
+        steps=[
+            SDStep(
+                nr=2,
+                sender="MSB",
+                receiver="?",
+                message="Aufbereitung und Übermittlung von Werten",
+                subprocess_ref="aufbereitung_und_übermittlung_von_werten",
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "MSB->>MSB: 2. Aufbereitung und Übermittlung von Werten" in lines
+    assert not [line for line in lines if "ungelesen" in line]
 
 
 def test_an_unresolved_note_anchor_is_dropped_not_named() -> None:

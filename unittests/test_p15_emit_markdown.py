@@ -250,3 +250,95 @@ def test_mermaid_legend_defines_the_unread_endpoint_marker() -> None:
 
 def test_mermaid_legend_stays_empty_for_a_clean_diagram() -> None:
     assert _deadline_legend({"steps": [{"nr": 1, "sender": "LF", "receiver": "NB", "message": "A"}]}) == []
+
+
+def test_mermaid_does_not_double_a_colon_form_ref_prefix() -> None:
+    """The tables write the marker both ways; a check for "ref " alone left
+    "3. ref ref: Aktivierung eines MaBiS-Zählpunkts …" on five steps of the corpus."""
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["ÜNB"],
+            "steps": [
+                {
+                    "nr": 3,
+                    "sender": "ÜNB",
+                    "receiver": "ÜNB",
+                    "message": "ref: Aktivierung eines MaBiS-Zählpunkts",
+                    "subprocess_ref": "aktivierung",
+                }
+            ],
+        }
+    )
+    assert "    ÜNB->>+ÜNB: 3. ref: Aktivierung eines MaBiS-Zählpunkts" in lines
+
+
+def test_mermaid_does_not_double_the_ref_prefix() -> None:
+    """239 steps of the shipped dataset carry both markers — a parsed ``subprocess_ref``
+    and a message that already opens with "ref " — and every one of them rendered as
+    "7. ref ref Stammdatenänderung …"."""
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["NB"],
+            "steps": [
+                {
+                    "nr": 7,
+                    "sender": "NB",
+                    "receiver": "NB",
+                    "message": "ref Stammdatenänderung vom NB",
+                    "subprocess_ref": "stammdatenänderung",
+                }
+            ],
+        }
+    )
+    assert "    NB->>+NB: 7. ref Stammdatenänderung vom NB" in lines
+
+
+def test_mermaid_keeps_a_ref_step_whose_message_carries_the_marker_a_self_message() -> None:
+    """The corpus shape: both markers set, one endpoint unread. 11 of the 16 "?" endpoints
+    look like this."""
+    lines = _render_sequence_diagram(
+        {
+            "participants": ["MSB"],
+            "steps": [
+                {
+                    "nr": 9,
+                    "sender": "MSB",
+                    "receiver": "?",
+                    "message": "ref Aufbereitung und Übermittlung von Werten",
+                    "subprocess_ref": "aufbereitung_und_übermittlung_von_werten",
+                }
+            ],
+        }
+    )
+    assert "    MSB->>+MSB: 9. ref Aufbereitung und Übermittlung von Werten" in lines
+    assert not [line for line in lines if "ungelesen" in line]
+
+
+def test_mermaid_drops_a_step_with_no_lane_at_all() -> None:
+    lines = _render_sequence_diagram(
+        {"participants": ["?"], "steps": [{"nr": 1, "sender": "?", "receiver": "?", "message": "Unklar"}]}
+    )
+    assert not [line for line in lines if "Unklar" in line or "?" in line]
+
+
+def test_the_legend_stays_silent_when_every_unread_endpoint_is_a_ref() -> None:
+    """A ref keeps its self-message, so the diagram carries no "(!) … ungelesen" note and
+    the legend must not announce one. Live case: reklamation_von_werten_beim_msb, whose
+    three unread endpoints are all refs."""
+    legend = _deadline_legend(
+        {
+            "participants": ["MSB", "NB"],
+            "steps": [
+                {"nr": 8, "sender": "MSB", "receiver": "?", "message": "ref Stornierung", "subprocess_ref": "s"},
+                {"nr": 9, "sender": "MSB", "receiver": "?", "message": "ref Aufbereitung", "subprocess_ref": "a"},
+            ],
+        }
+    )
+    assert not [line for line in legend if "ungelesen" in line]
+
+
+def test_the_legend_announces_the_marker_when_a_note_is_really_drawn() -> None:
+    legend = _deadline_legend(
+        {"participants": ["MSB"], "steps": [{"nr": 4, "sender": "?", "receiver": "MSB", "message": "Anforderung"}]}
+    )
+    assert [line for line in legend if "unlesbarem Endpunkt" in line]

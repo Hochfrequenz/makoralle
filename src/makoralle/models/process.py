@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
@@ -38,10 +39,25 @@ def is_known_actor(role: str | None) -> bool:
     Lives beside the fields it judges, because it is a property of the model rather than
     of one output dialect: the WSD and the Mermaid serializer both need the same rule.
 
-    >>> is_known_actor("NB"), is_known_actor("?"), is_known_actor("")
-    (True, False, False)
+    ``"NB"`` is an actor; ``"?"`` and ``""`` are not.
     """
     return bool(role) and role != UNKNOWN_ENDPOINT
+
+
+#: "ref Aufbereitung …" and "ref: Aktivierung …" — the source tables write the marker both
+#: ways, and a check for "ref " alone missed the colon form.
+REF_PREFIX = re.compile(r"^ref\b", re.I)
+
+
+def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
+    """True if the step is a reference to a subprocess rather than a message to an actor.
+
+    Two markers say so and they do not always agree: the parsed ``subprocess_ref``, and a
+    message that opens with "ref " as the source table writes it. Both serializers have to
+    read them the same way, or the same step is a self-message in one output and a note
+    about a missing counterpart in the other.
+    """
+    return bool(subprocess_ref) or bool(REF_PREFIX.match((message or "").strip()))
 
 
 class SDStep(BaseModel):

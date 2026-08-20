@@ -9,7 +9,7 @@ import yaml
 
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
-from makoralle.models.process import is_known_actor
+from makoralle.models.process import REF_PREFIX, is_known_actor, is_ref_step
 
 logger = logging.getLogger(__name__)
 
@@ -223,12 +223,24 @@ def _pid_table(sd: dict[str, Any]) -> list[str]:
     ]
 
 
+def _renders_as_unplaceable_note(step: dict[str, Any], participants: list[str]) -> bool:
+    """Whether this step is drawn as a "(!) … ungelesen" note rather than as an arrow."""
+    sender, receiver = step.get("sender", ""), step.get("receiver", "")
+    if is_known_actor(sender) and is_known_actor(receiver):
+        return False
+    anchor = next((role for role in (sender, receiver) if is_known_actor(role)), None)
+    if is_ref_step(step.get("message"), step.get("subprocess_ref")) and anchor:
+        return False  # stays a self-message on the lifeline it names
+    return bool(anchor) or any(is_known_actor(p) for p in participants)
+
+
 def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     """A short vocabulary legend for the deadline tags/notes rendered on the SD
     image. Only the marker kinds actually present on this diagram are listed:
     inline tags (unverzüglich/parallel/terminiert), an (i) reference note, and/or
     a [REVIEW] note for a still-unstructured complex Frist."""
     steps = sd.get("steps", [])
+    participants = sd.get("participants", [])
     types = {(s.get("deadline_rule") or {}).get("type") for s in steps}
     has_tags = bool(types & {"unverzüglich", "parallel", "terminiert"})
     has_reference = "reference" in types
@@ -236,9 +248,12 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     # The same "(!)" marker now also flags a step whose endpoint could not be read
     # (makorele#78), and that step need not carry a deadline at all — without this the
     # legend either omits the marker the diagram shows or defines it as a Frist it is not.
-    has_unread_endpoint = any(
-        any(end in step and not is_known_actor(step[end]) for end in ("sender", "receiver")) for step in steps
-    )
+    # Only steps that actually render as a note: a "ref" with an unread endpoint stays a
+    # self-message (its other end never named an actor), and a step with no lane at all is
+    # dropped. Without that exclusion the legend announced a marker the diagram does not
+    # show -- live on reklamation_von_werten_beim_msb, whose three unread endpoints are all
+    # refs -- and the block is rendered for the WSD-SVG page too, not just the Mermaid one.
+    has_unread_endpoint = any(_renders_as_unplaceable_note(step, participants) for step in steps)
     if not (has_tags or has_reference or has_complex or has_unread_endpoint):
         return []
     lines = ["**Fristen (Legende der Diagramm-Markierungen):**", ""]
@@ -286,9 +301,13 @@ def _render_sequence_diagram(sd: dict[str, Any]) -> list[str]:  # pylint: disabl
         pids = step.get("pid_refs", [])
 
         # Build message label
-        is_ref = bool(subprocess_ref) or (message or "").strip().lower().startswith("ref ")
-        if subprocess_ref:
-            label = f"{nr}. ref {message}"
+        is_ref = is_ref_step(message, subprocess_ref)
+        if is_ref:
+            # The source table already writes "ref …" in most of the corpus (239 steps of
+            # the shipped dataset carry both markers), and prefixing those again produced
+            # "7. ref ref Stammdatenänderung …" on every one of them.
+            body = message if REF_PREFIX.match((message or "").strip()) else f"ref {message}"
+            label = f"{nr}. {body}"
         else:
             label = f"{nr}. {message}"
             if fmt:
