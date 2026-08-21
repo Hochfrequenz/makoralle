@@ -206,14 +206,40 @@ def _append_unplaceable(lines: list[str], text: str, known_lanes: list[str], nr:
     the one-sided case, not better — and the webapp lists it in its step table either way,
     so a silent drop would leave a step that appears in no diagram and on no worklist.
 
-    With no lane at all there is nothing to hang it on, and the step is dropped with a
-    warning: a diagram in which nothing was read.
+    With no lane at all there is nothing to hang it on, and the step is dropped: a diagram in
+    which nothing was read. That is reachable even though :func:`_draws_nothing` filters the
+    loop, because a dropped step can still carry a note that names an actor — the note is drawn
+    and the step is not.
     """
     if not known_lanes:
-        logger.warning("dropping step %s from the diagram: no endpoint and no lane is known", nr)
+        _log_dropped(nr)
         return
     body = _clean_note_text(text)
     lines.append(f"note over {span_of_lanes(known_lanes)}: (!) {body} — beide Endpunkte ungelesen  [REVIEW]")
+
+
+def _log_dropped(nr: int) -> None:
+    """One wording for one event, wherever it is decided."""
+    logger.warning("dropping step %s from the diagram: no endpoint and no lane is known", nr)
+
+
+def _draws_nothing(step: SDStep, known_lanes: list[str], notes: list[SDNote]) -> bool:
+    """True if the emitter would produce no line at all for this step.
+
+    The mirror of :func:`_append_unplaceable`'s drop, and the reason it exists: fragments are
+    opened by the step loop *before* the step is drawn, so a diagram in which nothing was read
+    used to yield a bare ``alt``/``else``/``end`` skeleton around no messages (makoralle#38).
+
+    Exactly one shape draws nothing. With either endpoint readable there is always a line — an
+    arrow, a self-arrow on the ``ref`` lifeline, or the one-sided note; with neither, a lane still
+    lets the step span the diagram. Only both unread *and* no lane leaves nothing — and even then
+    not if one of the step's own notes names an actor, since that note is drawn inside the branch.
+    """
+    if is_known_actor(step.sender) or is_known_actor(step.receiver):
+        return False
+    if known_lanes:
+        return False
+    return not any(is_known_actor(who) for note in notes for who in note.participants)
 
 
 def span_of_lanes(lanes: list[str]) -> str:
@@ -304,6 +330,12 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
 
     current: list[tuple[SDFragment, int]] = []
     for step in sorted(sd.steps, key=lambda s: s.nr):
+        if _draws_nothing(step, known_lanes, notes_by_step.get(step.nr, [])):
+            # Before the fragment bookkeeping, or the branch is opened for a step that never
+            # arrives. Nothing else attached to the step draws either: its deadline note has no
+            # lifeline and no lane, and its notes name no actor.
+            _log_dropped(step.nr)
+            continue
         target = paths.get(step.nr, [])
 
         common = 0

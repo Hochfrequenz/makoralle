@@ -1,3 +1,7 @@
+import logging
+
+import pytest
+
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
 from makoralle.serialization.wsd import _deadline_note, _deadline_tag, emit_wsd
 from makoralle.webapp_export import extract_review_notes
@@ -845,3 +849,141 @@ def test_deadline_tag_says_werktaeglich_when_the_source_does() -> None:
     assert _deadline_tag(DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")) == (
         "{werktäglich}"
     )
+
+
+def test_a_diagram_whose_every_step_is_dropped_emits_no_fragment_skeleton() -> None:
+    """makoralle#38: fragments were opened before the emitter decided the step was undrawable.
+
+    A diagram in which nothing was read yielded ``alt Bedingung 1 / else Bedingung 2 / end`` and
+    nothing else — a fragment around no messages, which the renderer may or may not accept and
+    which says nothing either way. Empty *branches* stay deliberate (``_open_lines`` reconstructs
+    the labels of empty leading and trailing branches, and that is tested); it is opening a
+    fragment for steps that never get emitted that is wrong.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[
+            SDStep(nr=1, sender="?", receiver="?", message="Eins"),
+            SDStep(nr=2, sender="?", receiver="?", message="Zwei"),
+        ],
+        fragments=[
+            SDFragment(
+                type="alt",
+                branches=[
+                    SDBranch(condition="Bedingung 1", step_nrs=[1]),
+                    SDBranch(condition="Bedingung 2", step_nrs=[2]),
+                ],
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert not [line for line in lines if line.startswith(("alt ", "else ", "end"))], lines
+
+
+def test_a_fragment_is_still_opened_for_a_step_that_becomes_a_note() -> None:
+    """The boundary: undrawable as an *arrow* is not undrawable. A step that spans the diagram or
+    becomes a one-sided note is inside its branch, so the branch must be there."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Bedingung 1", step_nrs=[1])])],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "alt Bedingung 1" in lines
+    assert "end" in lines
+    note = next(line for line in lines if line.startswith("note over"))
+    assert lines.index("alt Bedingung 1") < lines.index(note) < lines.index("end")
+
+
+def test_a_fragment_survives_for_a_dropped_step_that_still_carries_a_readable_note() -> None:
+    """No lane, no endpoint — but the note names an actor, so something *is* drawn in the branch."""
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        # The readable anchor sits *behind* an unreadable one, so a predicate that looks only at
+        # the first participant misses it and deletes the note with the step.
+        notes=[SDNote(position="over", participants=["?", "NB"], text="Hinweis", after_step=1)],
+        fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Bedingung 1", step_nrs=[1])])],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "alt Bedingung 1" in lines
+    assert "note over NB: Hinweis" in lines
+
+
+def test_an_empty_leading_branch_still_keeps_its_label() -> None:
+    """The behaviour this must not break: a fragment with drawable steps keeps every branch label,
+    including the empty ones — which is why the fix is not "never emit an empty branch"."""
+    sd = SequenceDiagram(
+        participants=["LF", "NB"],
+        steps=[SDStep(nr=1, sender="LF", receiver="NB", message="Eins")],
+        fragments=[
+            SDFragment(
+                type="alt",
+                branches=[
+                    SDBranch(condition="Leer", step_nrs=[]),
+                    SDBranch(condition="Voll", step_nrs=[1]),
+                ],
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "alt Leer" in lines
+    assert "else Voll" in lines
+
+
+@pytest.mark.parametrize(
+    ("sender", "receiver"),
+    [pytest.param("MSB", "?", id="sender-known"), pytest.param("?", "MSB", id="receiver-known")],
+)
+def test_a_step_naming_an_actor_no_participant_declares_is_still_drawn(sender: str, receiver: str) -> None:
+    """The lane list and the endpoints can disagree, and then the endpoints win.
+
+    p08 writes ``participants=["?"]`` for a diagram in which it read no actor, so `known_lanes` can
+    be empty while a step still names one. Skipping such a step because there is no lane would
+    delete the only readable thing in the diagram — so the endpoint, not the lane list, decides.
+
+    Both endpoints get a case: review found that checking only the sender left the suite green while
+    silently deleting the step of every receiver-only diagram, which is the severe direction.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender=sender, receiver=receiver, message="Mitteilung")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over MSB: (!) 1. Mitteilung — Gegenstelle ungelesen  [REVIEW]" in lines
+
+
+def test_a_note_that_names_nothing_readable_does_not_keep_the_fragment(caplog: pytest.LogCaptureFixture) -> None:
+    """The third boundary: a note has to be *drawable*, not merely present.
+
+    `_emit_note` skips a note whose participants are all unreadable when there is no lane to span,
+    so treating "the step has a note" as "something will be drawn" reopens the exact skeleton this
+    change removes — verified: `alt B1 / else B2 / end` around no messages.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        notes=[SDNote(position="over", participants=["?"], text="Hinweis", after_step=1)],
+        fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Bedingung 1", step_nrs=[1])])],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        lines = emit_wsd(sd).splitlines()
+    assert not [line for line in lines if line.startswith(("alt ", "else ", "end"))], lines
+    assert "Hinweis" not in "\n".join(lines)
+    # and the drop is audible: a step that leaves no trace in the diagram must leave one in the log
+    assert [record for record in caplog.records if "dropping step 1" in record.message]
+
+
+def test_the_other_drop_path_is_audible_too(caplog: pytest.LogCaptureFixture) -> None:
+    """`_append_unplaceable`'s own drop — reached when a note keeps the fragment but the step itself
+    still has nowhere to go. Both paths go through `_log_dropped`, and neither may go quiet."""
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        notes=[SDNote(position="over", participants=["?", "NB"], text="Hinweis", after_step=1)],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        lines = emit_wsd(sd).splitlines()
+    assert "note over NB: Hinweis" in lines
+    assert not [line for line in lines if "Eins" in line]
+    assert [record for record in caplog.records if "dropping step 1" in record.message]
