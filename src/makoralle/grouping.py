@@ -150,8 +150,11 @@ def uc_sd_section_groups(segmented: dict[str, Any]) -> dict[str, list[dict[str, 
         process_id = uc_process_id(u["heading"])
         if process_id in out:
             # Two use cases whose headings slug the same: their SDs land in one group and the
-            # webapp shows one process where the documents describe two. Absent from all seven
-            # segmented documents measured, and silent if it ever arrives — hence the warning.
+            # webapp shows one process where the documents describe two. This fires on the real
+            # MaBiS segmentation — 17.3.2.1.1 and 17.3.4.1.1 both slug to
+            # `übermittlung_der_monatlichen_ausfallarbeitszeitreihe_je_marktlokation`, the use-case
+            # side of the SD collision makorele#113 fixes — so whoever reads it in a pipeline log
+            # should look there first rather than for corrupted data.
             logger.warning("two use cases slug to %r; their SDs will share one group: %r", process_id, u.get("heading"))
         out[process_id] = out.get(process_id, [])
     for s in secs:
