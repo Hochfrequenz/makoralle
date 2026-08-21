@@ -16,6 +16,20 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+#: What makes a heading a use case. The documents spell the marker three ways — measured over the
+#: 379 headings of ``BK6-24-174_MaBiS_Lesefassung.pdf``: ``UC:`` 101x (the leaf section),
+#: ``Use-Case:`` 105x (its parent, and the only marker on four use cases), ``Use Case:`` once
+#: (10.2) — and the table of contents prints them upper-cased, hence the case-insensitive match.
+#: The same pattern as ``makorele.pipeline.wrapped_text.UC_HEADING_MARKER``, which is the other
+#: half of makoralle#28; that repo should import this one rather than keep its copy.
+UC_HEADING_MARKER = re.compile(r"\b(?:UC|Use[\s-]?Case)\s*:", re.I)
+
+#: The *leaf* section's marker, the short spelling only — the section p07 keeps as canonical. A
+#: normal use case carries both spellings, one per section level, so this is what tells the leaf
+#: from its parent. Keying on the long spelling as an equal alternative would give every use case
+#: two entries; it is a fallback instead, for a parent with no leaf below it.
+LEAF_UC_MARKER = re.compile(r"\bUC\s*:", re.I)
+
 
 def _slug(text: str) -> str:
     s = text.strip().lower().replace(" ", "_")
@@ -37,8 +51,14 @@ def _normalize_for_matching(text: str) -> str:
 
 
 def uc_process_id(uc_heading: str) -> str:
-    """Derive the canonical process id (slug) from a ``… UC: …`` section heading."""
-    return _slug(uc_heading.rsplit("UC:", maxsplit=1)[-1])
+    """Derive the canonical process id (slug) from a use-case section heading.
+
+    Everything after the *last* marker, in any of its spellings. ``rsplit("UC:")[-1]`` returned the
+    whole heading for a ``Use-Case:`` one — number, marker and all — so the slug it derived was not
+    the id anything else uses. A heading with no marker keeps its whole text, as before.
+    """
+    markers = list(UC_HEADING_MARKER.finditer(uc_heading))
+    return _slug(uc_heading[markers[-1].end() :] if markers else uc_heading)
 
 
 def sd_slug_and_name(sd_heading: str, uc_name: str | None) -> tuple[str, str | None]:
@@ -90,7 +110,7 @@ def uc_sd_section_groups(segmented: dict[str, Any]) -> dict[str, list[dict[str, 
     secs = segmented.get("sections", [])
     ucs: dict[str, dict[str, Any]] = {}
     for s in secs:
-        if "UC:" not in s.get("heading", ""):
+        if not LEAF_UC_MARKER.search(s.get("heading", "")):
             continue
         parent = _parent(s["section_id"])
         if parent in ucs:
@@ -101,6 +121,20 @@ def uc_sd_section_groups(segmented: dict[str, Any]) -> dict[str, list[dict[str, 
                 ucs[parent].get("heading", ""),
             )
         ucs[parent] = s
+    # A use case whose only marker is the long spelling: MaBiS 6.7, 6.8, 8.5 and 12.4, where the
+    # parent reads "Use-Case: …" and no child carries "UC:" (12.4.1 reads "UC Austausch …" with no
+    # colon, which is not a marker). Its SDs are its *children*, so it keys on its own section id
+    # rather than its parent's — and only where the leaf pass claimed nothing, so a use case with
+    # both spellings still produces one group.
+    for s in secs:
+        heading = s.get("heading", "")
+        if LEAF_UC_MARKER.search(heading) or not UC_HEADING_MARKER.search(heading):
+            continue
+        section_id = s["section_id"]
+        if section_id in ucs or any(other.startswith(f"{section_id}.") for other in ucs):
+            continue
+        ucs[section_id] = s
+
     # Every UC becomes a key (authoritative map), even if it has no SD siblings.
     out: dict[str, list[dict[str, Any]]] = {uc_process_id(u["heading"]): [] for u in ucs.values()}
     for s in secs:
