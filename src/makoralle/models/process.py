@@ -67,9 +67,14 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
 
     The *shape* of a fully readable ref step is a separate question, and the two emitters
     still differ there: WSD draws a self-message for the "ref " form only, Mermaid an arrow
-    plus a "Subprocess call" note. 13 shipped steps show the difference. Unifying it would
-    reshape 7 arrows whose ref title names their receiver, so it is a decision about the
-    diagram rather than a cleanup — makoralle#36.
+    plus a "Subprocess call" note. Measured against the released corpus (v0.0.15), that
+    difference is visible in exactly **one** step — `herstellung_einer_100_lf-zuordnung…`
+    Nr. 9, `NB -> LFA`, "ref Abrechnungsdaten Bilanzkreisabrechnung", where WSD writes
+    `NB->>NB` and Mermaid `NB->>+LFA`. Every other readable "ref " step already names the same
+    party twice, so both emitters draw the same self-arrow. Unifying the rule the other way —
+    self-message for the colon form too — would reshape 7 arrows whose ref title names their
+    receiver ("ref: Deaktivierung … vom BIKO an NB"), which is a decision about what the
+    diagram should say rather than a cleanup: makoralle#36.
     """
     return bool(subprocess_ref) or bool(REF_PREFIX.match((message or "").strip()))
 
