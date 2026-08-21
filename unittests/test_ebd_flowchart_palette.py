@@ -42,19 +42,24 @@ def _contrast(one: str, other: str) -> float:
 
 
 def _flowchart() -> list[str]:
-    tree: dict[str, Any] = {
-        "steps": [
-            {
-                "nr": "1",
-                "question": "Liegt etwas vor?",
-                "branches": [
-                    {"answer": "ja", "if_yes_outcome": "A01", "if_yes_cluster": "Zustimmung"},
-                    {"answer": "nein", "if_no_outcome": "A02", "if_no_cluster": "Ablehnung"},
-                ],
-            }
-        ]
-    }
-    return _render_ebd_flowchart(tree)
+    """A tree that really produces one outcome node per class.
+
+    The field names matter: `_render_ebd_flowchart` reads `check` / `if_yes_code` / `if_yes_cluster`,
+    not `question` / `branches`. An invented shape renders a single questionless node and *no*
+    outcomes — so the `classDef` header still prints and the assertions below pass while proving
+    nothing about a node ever carrying the class. Copilot caught exactly that.
+    """
+    steps = [
+        {
+            "nr": 10 * (index + 1),
+            "check": f"Frage {index}?",
+            "if_yes_code": f"A0{index}",
+            "if_yes_cluster": cluster,
+            "if_no": 10 * (index + 2),
+        }
+        for index, cluster in enumerate(("Zustimmung", "Ablehnung", "Änderung der Daten", None))
+    ]
+    return _render_ebd_flowchart({"steps": steps})
 
 
 @pytest.mark.parametrize("name", sorted(TOKENS))
@@ -65,7 +70,10 @@ def test_each_outcome_class_is_built_from_its_palette_tokens(name: str) -> None:
 
 @pytest.mark.parametrize("name", sorted(TOKENS))
 def test_each_class_reaches_the_rendered_flowchart(name: str) -> None:
-    assert f"    classDef {name} {OUTCOME_STYLES[name]}" in _flowchart()
+    """Defined *and* applied: a `classDef` nobody references colours nothing."""
+    rendered = _flowchart()
+    assert f"    classDef {name} {OUTCOME_STYLES[name]}" in rendered
+    assert [line for line in rendered if f":::{name}" in line], rendered
 
 
 def test_no_off_palette_colour_survives() -> None:
