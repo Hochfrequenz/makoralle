@@ -129,8 +129,9 @@ def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
     Per *process*, though, and not per diagram: 57 (process, PID) pairs in v0.0.15 have rows under
     more than one `bezeichnung_sequenzdiagramm`, and **56** of the 57 carry the same name in each.
     The 57th is 19101 again — those same three rows, under `Geschäftsdatenanfrage`, `… vom LF an NB`
-    and `… vom MSB an NB` — which is the conflict named two paragraphs above, resolved the same way. So nothing is mis-attributed
-    today, but only because the one disagreement is whitespace: a row need not describe the diagram
+    and `… vom MSB an NB` — the conflict named two paragraphs above, resolved the same way. So
+    nothing is mis-attributed today, but only because that one disagreement is whitespace: a row
+    need not describe the diagram
     whose step carries the number, and a real disagreement there would resolve to whichever
     row the file happens to list first.
 
