@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 
 #: What makes a heading a use case. The documents spell the marker three ways — measured over the
 #: 379 headings of ``BK6-24-174_MaBiS_Lesefassung.pdf``: ``UC:`` 101x (the leaf section),
-#: ``Use-Case:`` 104x (its parent, and the only marker on four use cases), ``Use Case:`` once
+#: ``Use-Case:`` 104x (its parent, and the only marker on four sections *this* module groups — 6.7,
+#: 6.8, 8.5 and 12.4; makorele's mirrored comment says "two", which is the count that survives p07's
+#: use-case deduplication, a different question about the same sentence), ``Use Case:`` once
 #: (10.2) — and the table of contents prints them upper-cased, hence the case-insensitive match.
 #: The same pattern as ``makorele.pipeline.wrapped_text.UC_HEADING_MARKER``, which is the other
 #: half of makoralle#28; that repo should import this one rather than keep its copy.
