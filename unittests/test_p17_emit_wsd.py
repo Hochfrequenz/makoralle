@@ -1,3 +1,5 @@
+import pytest
+
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
 from makoralle.serialization.wsd import _deadline_note, _deadline_tag, emit_wsd
 from makoralle.webapp_export import extract_review_notes
@@ -896,7 +898,9 @@ def test_a_fragment_survives_for_a_dropped_step_that_still_carries_a_readable_no
     sd = SequenceDiagram(
         participants=["?"],
         steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
-        notes=[SDNote(position="over", participants=["NB"], text="Hinweis", after_step=1)],
+        # The readable anchor sits *behind* an unreadable one, so a predicate that looks only at
+        # the first participant misses it and deletes the note with the step.
+        notes=[SDNote(position="over", participants=["?", "NB"], text="Hinweis", after_step=1)],
         fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Bedingung 1", step_nrs=[1])])],
     )
     lines = emit_wsd(sd).splitlines()
@@ -925,16 +929,23 @@ def test_an_empty_leading_branch_still_keeps_its_label() -> None:
     assert "else Voll" in lines
 
 
-def test_a_step_naming_an_actor_no_participant_declares_is_still_drawn() -> None:
+@pytest.mark.parametrize(
+    ("sender", "receiver"),
+    [pytest.param("MSB", "?", id="sender-known"), pytest.param("?", "MSB", id="receiver-known")],
+)
+def test_a_step_naming_an_actor_no_participant_declares_is_still_drawn(sender: str, receiver: str) -> None:
     """The lane list and the endpoints can disagree, and then the endpoints win.
 
     p08 writes ``participants=["?"]`` for a diagram in which it read no actor, so `known_lanes` can
     be empty while a step still names one. Skipping such a step because there is no lane would
     delete the only readable thing in the diagram — so the endpoint, not the lane list, decides.
+
+    Both endpoints get a case: review found that checking only the sender left the suite green while
+    silently deleting the step of every receiver-only diagram, which is the severe direction.
     """
     sd = SequenceDiagram(
         participants=["?"],
-        steps=[SDStep(nr=1, sender="MSB", receiver="?", message="Mitteilung")],
+        steps=[SDStep(nr=1, sender=sender, receiver=receiver, message="Mitteilung")],
     )
     lines = emit_wsd(sd).splitlines()
     assert "note over MSB: (!) 1. Mitteilung — Gegenstelle ungelesen  [REVIEW]" in lines
