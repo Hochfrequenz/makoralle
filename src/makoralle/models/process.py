@@ -69,7 +69,9 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     still differ there: WSD draws a self-message for the "ref " form only, Mermaid an arrow.
     (Mermaid's "Subprocess call" note is keyed on a parsed ``subprocess_ref``, not on the
     message, so the one step where the two disagree gets no note at all — its
-    ``subprocess_ref`` is ``None``; 114 of the 142 same-party ref steps do carry one.)
+    ``subprocess_ref`` is ``None``; 114 of the 142 same-party steps whose message opens with "ref "
+    do carry one. Those two counts are over the *prefix* form, not over everything
+    :func:`is_ref_step` accepts — with a bare ``subprocess_ref`` counted too it is 119 of 151.)
     Measured against the released corpus (v0.0.15), that
     difference is visible in exactly **one** step — `herstellung_einer_100_lf-zuordnung…`
     Nr. 9, `NB -> LFA`, "ref Abrechnungsdaten Bilanzkreisabrechnung", where WSD writes
