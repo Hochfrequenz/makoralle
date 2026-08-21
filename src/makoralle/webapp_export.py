@@ -124,6 +124,12 @@ def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
     sit in two different processes and each keeps its own. Nothing joins across processes, so a PID
     cannot pick up a name from a process that does not reference it.
 
+    Per *process*, though, and not per diagram: 57 of the (process, PID) pairs in v0.0.15 take their
+    name from a row belonging to a different `bezeichnung_sequenzdiagramm` of the same process. All
+    57 agree, so nothing is mis-attributed today — but a row is not required to describe the diagram
+    whose step carries the number, and a future disagreement there would resolve to whichever row
+    the file lists first.
+
     A row whose Prüfidentifikator is **0** is not a PID: the 9 such rows in v0.0.15 describe API
     paths (`/steuerbefehl/initialZustand/`, `/maloID/request/`) which the official list carries in
     the *Anwendungsfall* column with no number of their own. They contribute no name, and no step
