@@ -12,7 +12,6 @@ invisible as the raw pair it replaces and made `reject` worse than its raw pair.
 a decision, not a default, and the ratio assertions are what make it one.
 """
 
-from typing import Any
 
 import pytest
 
