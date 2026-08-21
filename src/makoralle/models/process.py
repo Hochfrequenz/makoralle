@@ -67,24 +67,24 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
 
     The *shape* of a fully readable ref step is a separate question, and the two emitters
     still differ there: WSD draws a self-message for the "ref " form only, Mermaid an arrow.
-    (Mermaid's "Subprocess call" note is keyed on a parsed ``subprocess_ref``, not on the
-    message, so the one step where the two disagree gets no note at all — its
-    ``subprocess_ref`` is ``None``; 114 of the 142 same-party steps whose message opens with
-    ``"ref "`` do carry one.
-
-    Those two counts are over the space form — ``_has_ref_prefix`` in the WSD emitter, which is
-    ``startswith("ref ")`` — and not over what this function accepts. Counting everything it accepts
-    gives 119 of 151, and the extra nine are messages spelled ``ref:`` (eight) or ``ref.`` (one),
-    *not* steps recognised through their ``subprocess_ref``: on the released corpus all **119** steps
-    carrying a ``subprocess_ref`` (127 occurrences — a file can print the same step more than once)
-    also match :data:`REF_PREFIX`, so that arm of the ``or`` below adds nothing here. It stays
-    because "the two markers do not always agree" is a claim about the parser rather than about this
-    corpus — but nobody should expect a diff from touching it.)
     Measured against the released corpus (v0.0.15), that
     difference is visible in exactly **one** step — `herstellung_einer_100_lf-zuordnung…`
     Nr. 9, `NB -> LFA`, "ref Abrechnungsdaten Bilanzkreisabrechnung", where WSD writes
     `NB->>NB` and Mermaid `NB->>+LFA`. Every other readable "ref " step already names the same
-    party twice, so both emitters draw the same self-arrow. Unifying the rule the other way —
+    party twice, so both emitters draw the same self-arrow.
+
+    Mermaid's "Subprocess call" note is keyed on a parsed ``subprocess_ref`` rather than on the
+    message, so that one disagreeing step gets no note at all — its ``subprocess_ref`` is ``None``,
+    while 114 of the 142 same-party ``"ref "`` steps do carry one.
+
+    Both of those counts are over the space form — ``_has_ref_prefix`` in the WSD emitter, i.e.
+    ``startswith("ref ")`` — and not over what this function accepts. Counting everything it accepts
+    gives 119 of 151, and the extra nine are messages spelled ``ref:`` (eight) or ``ref.`` (one),
+    *not* steps recognised through their ``subprocess_ref``: on the released corpus all **119** steps
+    carrying one (127 occurrences — a file can print the same step more than once) also match
+    :data:`REF_PREFIX`, so that arm of the ``or`` below adds nothing here. It stays because "the two
+    markers do not always agree" is a claim about the parser rather than about this corpus, but
+    nobody should expect a diff from touching it. Unifying the rule the other way —
     self-message for the colon form too — would reshape 7 arrows whose ref title names their
     receiver ("ref: Deaktivierung … vom BIKO an NB"), which is a decision about what the
     diagram should say rather than a cleanup: makoralle#36.
