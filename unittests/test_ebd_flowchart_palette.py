@@ -12,6 +12,8 @@ invisible as the raw pair it replaces and made `reject` worse than its raw pair.
 a decision, not a default, and the ratio assertions are what make it one.
 """
 
+from typing import Any
+
 import pytest
 
 from makoralle.serialization.markdown import _OUTCOME_CLASS, OUTCOME_STYLES, _render_ebd_flowchart
@@ -47,16 +49,37 @@ def _flowchart() -> list[str]:
     outcomes — so the `classDef` header still prints and the assertions below pass while proving
     nothing about a node ever carrying the class. Copilot caught exactly that.
     """
-    steps = [
-        {
-            "nr": 10 * (index + 1),
-            "check": f"Frage {index}?",
-            "if_yes_code": f"A0{index}",
-            "if_yes_cluster": cluster,
-            "if_no": 10 * (index + 2),
-        }
-        for index, cluster in enumerate(("Zustimmung", "Ablehnung", "Änderung der Daten", None))
-    ]
+    clusters = ("Zustimmung", "Ablehnung", "Änderung der Daten", None)
+    steps: list[dict[str, Any]] = []
+    for index, cluster in enumerate(clusters):
+        nr = 10 * (index + 1)
+        # Alternating branches, because the two are separate lines in the emitter and the *no*
+        # branch is the commoner one in shipped output — 598 `rn…:::` against 409 `ry…:::` across
+        # the released markdown. Exercising only `if_yes_code` left deleting the `rn` line green,
+        # i.e. 598 of 1007 outcome nodes could ship unstyled with a green CI.
+        if index % 2:
+            steps.append(
+                {
+                    "nr": nr,
+                    "check": f"Frage {index}?",
+                    "if_no_code": f"A0{index}",
+                    "if_no_cluster": cluster,
+                    "if_yes": nr + 10,
+                }
+            )
+        else:
+            steps.append(
+                {
+                    "nr": nr,
+                    "check": f"Frage {index}?",
+                    "if_yes_code": f"A0{index}",
+                    "if_yes_cluster": cluster,
+                    "if_no": nr + 10,
+                }
+            )
+    # The last step's other branch must not point at a node the fixture never declares, or it
+    # renders a dangling edge.
+    steps[-1] = {key: value for key, value in steps[-1].items() if key not in ("if_yes", "if_no")}
     return _render_ebd_flowchart({"steps": steps})
 
 
