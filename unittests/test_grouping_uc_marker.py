@@ -64,7 +64,11 @@ def test_a_child_marker_without_a_colon_does_not_claim_the_group() -> None:
             ("12.4.2", "12.4.2 SD: Austausch der Deltazeitreihenübertrag-Liste von ÜNB an NB"),
         )
     )
-    assert list(groups) == ["austausch_der_deltazeitreihenübertrag-liste_von_ünb_an_nb"]
+    key = "austausch_der_deltazeitreihenübertrag-liste_von_ünb_an_nb"
+    assert list(groups) == [key]
+    # and the SD is attached to it: a key with an empty list would pass the line above while the
+    # diagram still fell back to fuzzy matching, which is the defect and not the fix (Copilot).
+    assert [section["section_id"] for section in groups[key]] == ["12.4.2"]
 
 
 def test_a_use_case_with_both_spellings_produces_one_group_not_two() -> None:
