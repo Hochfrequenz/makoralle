@@ -105,12 +105,75 @@ def _deadline_table(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def _pid_table(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
+    """Prüfidentifikator -> the Anwendungsfall the official PID list gives it.
+
+    The number alone does not say what a PID is for, so a reader checking which one applies to them
+    has to leave the page (makorele#52). The name is already in the data — `anwendungsfall` on each
+    `pid_mappings` row — and was simply not carried into the payload.
+
+    One PID can appear on several rows — a different Zuordnungsobjekt or Objekteigenschaft per row —
+    almost always with the same Anwendungsfall. Two of the 429 named PIDs in dataset v0.0.15 disagree
+    and both disagreements are a typo rather than a meaning: 19101 has three rows and reads "Ablehnung
+    der Anfrage␣␣Stammdaten" on the first, one space on the other two; 55672 reads "Abr.-Daten
+    BK-Abr. erz. Malo" against "erz.. MaLo". So the first row wins — the label has one line to live
+    on, and joining two spellings of one name would put text in it that no document contains. Note
+    what that means here: the row that wins is the one carrying the double space, because it is the
+    one the file lists first.
+
+    This map is built per process, which matters for exactly one of those two: 19101's three rows are
+    all in `geschäftsdatenanfrage`, so `setdefault` really does resolve it, while 55672's two spellings
+    sit in two different processes and each keeps its own. Nothing joins across processes, so a PID
+    cannot pick up a name from a process that does not reference it.
+
+    Per *process*, though, and not per diagram: 57 (process, PID) pairs in v0.0.15 have rows under
+    more than one `bezeichnung_sequenzdiagramm`, and **56** of the 57 carry the same name in each.
+    The 57th is 19101 again — those same three rows, under `Geschäftsdatenanfrage`, `… vom LF an NB`
+    and `… vom MSB an NB` — the conflict named two paragraphs above, resolved the same way. So
+    nothing is mis-attributed today, but only because that one disagreement is whitespace: a row need
+    not describe the diagram whose step carries the number, and a real disagreement there would
+    resolve to whichever row the file happens to list first.
+
+    A row whose Prüfidentifikator is **0** is not a PID: the 9 such rows in v0.0.15 describe API
+    paths (`/steuerbefehl/initialZustand/`, `/maloID/request/`) which the official list carries in
+    the *Anwendungsfall* column with no number of their own. They contribute no name, and no step
+    references PID 0.
+    """
+    names: dict[int, str] = {}
+    for row in mappings:
+        raw = row.get("prüfidentifikator")
+        name = (row.get("anwendungsfall") or "").strip()
+        # `not raw` is what fires on the corpus: it rejects Prüfidentifikator 0, the placeholder on
+        # the nine API-path rows. `not name` matters too — a blank Anwendungsfall claiming the number
+        # would block a later row that has one, turning a real name into the empty string this
+        # function is careful to distinguish from "no row".
+        if not raw or not name:
+            continue
+        try:
+            number = int(str(raw).strip())
+        except ValueError:  # defensive: every value in v0.0.15 is an integer, but the column is text
+            continue
+        names.setdefault(number, name)
+    return names
+
+
+def _pid_table(steps: list[dict[str, Any]], names: dict[int, str] | None = None) -> list[dict[str, Any]]:
     """Per-step Prüfidentifikator rows, one per referenced PID."""
+    names = names or {}
     out: list[dict[str, Any]] = []
     for s in steps:
         for pid in s.get("pid_refs") or []:
-            out.append({"nr": s.get("nr"), "pid": pid, "message": s.get("message"), "format": s.get("format")})
+            out.append(
+                {
+                    "nr": s.get("nr"),
+                    "pid": pid,
+                    # None rather than "" when the PID list has no row for this number: the webapp
+                    # can then tell "no name recorded" from "a name that is empty".
+                    "name": names.get(pid),
+                    "message": s.get("message"),
+                    "format": s.get("format"),
+                }
+            )
     return out
 
 
@@ -123,6 +186,7 @@ def _distinct_pids(steps: list[dict[str, Any]]) -> list[int]:
 def build_detail(process: dict[str, Any], *, review_notes: list[str]) -> dict[str, Any]:
     """Build the full per-process detail record (``processes/<id>.json``)."""
     p = process.get("process") or {}
+    pid_names = _pid_names(process.get("pid_mappings") or [])
     pid = p.get("id") or ""
     diagrams_src = _diagrams_source(process)
     n = len(diagrams_src)
@@ -140,7 +204,7 @@ def build_detail(process: dict[str, Any], *, review_notes: list[str]) -> dict[st
                 "participants": d.get("participants") or [],
                 "steps": d_steps,
                 "deadlines": _deadline_table(d_steps),
-                "pids": _pid_table(d_steps),
+                "pids": _pid_table(d_steps, pid_names),
                 "svg": f"/diagrams/sequence/{key}.svg",
                 # Attached by run(), which can see which artifact actually exists;
                 # build_detail has no filesystem, so it emits None rather than a
@@ -162,7 +226,7 @@ def build_detail(process: dict[str, Any], *, review_notes: list[str]) -> dict[st
         "participants": primary_participants,
         "steps": primary_steps,
         "deadlines": _deadline_table(primary_steps),
-        "pids": _pid_table(primary_steps),
+        "pids": _pid_table(primary_steps, pid_names),
         "diagrams": diagrams,
         "reviewNotes": review_notes or [],
         # Per-diagram approval (and this primary-mirroring detail.approval) is

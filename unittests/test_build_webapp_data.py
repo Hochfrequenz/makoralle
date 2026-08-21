@@ -114,8 +114,8 @@ def test_build_detail_pid_table_flattens_one_row_per_ref() -> None:
     }
     detail = build_detail(proc, review_notes=[])
     assert detail["pids"] == [
-        {"nr": 1, "pid": 27003, "message": "Preisblatt", "format": "PRICAT"},
-        {"nr": 1, "pid": 27004, "message": "Preisblatt", "format": "PRICAT"},
+        {"nr": 1, "pid": 27003, "name": None, "message": "Preisblatt", "format": "PRICAT"},
+        {"nr": 1, "pid": 27004, "name": None, "message": "Preisblatt", "format": "PRICAT"},
     ]
 
 
@@ -401,13 +401,13 @@ def test_build_detail_emits_per_diagram_list_for_multi_sd() -> None:
     assert d0["svg"] == "/diagrams/sequence/wechsel__lieferant.svg"
     # per-diagram deadline/pid tables derive from THAT diagram's steps
     assert d0["deadlines"] == [{"nr": 1, "deadline": "Unverzüglich", "rule": None}]
-    assert d0["pids"] == [{"nr": 1, "pid": 11001, "message": None, "format": None}]
+    assert d0["pids"] == [{"nr": 1, "pid": 11001, "name": None, "message": None, "format": None}]
     assert d1["slug"] == "netzbetreiber"
     assert d1["svg"] == "/diagrams/sequence/wechsel__netzbetreiber.svg"
     assert d1["deadlines"] == []
     assert d1["pids"] == [
-        {"nr": 1, "pid": 11002, "message": None, "format": None},
-        {"nr": 1, "pid": 11003, "message": None, "format": None},
+        {"nr": 1, "pid": 11002, "name": None, "message": None, "format": None},
+        {"nr": 1, "pid": 11003, "name": None, "message": None, "format": None},
     ]
     # overlay is attached by run(), not build_detail; no approval added (Task 3.5)
     assert "overlay" not in d0 and "overlay" not in d1
@@ -468,8 +468,8 @@ def test_run_emits_per_sd_diagrams_and_copies_all_svgs(tmp_path: pathlib.Path) -
     # per-diagram deadlines/pids reflect each diagram's own steps
     assert d0["deadlines"] == [{"nr": 1, "deadline": "Unverzüglich", "rule": None}]
     assert d1["pids"] == [
-        {"nr": 1, "pid": 11002, "message": None, "format": None},
-        {"nr": 1, "pid": 11003, "message": None, "format": None},
+        {"nr": 1, "pid": 11002, "name": None, "message": None, "format": None},
+        {"nr": 1, "pid": 11003, "name": None, "message": None, "format": None},
     ]
     # both per-SD svgs copied into the webapp
     seq_dest = web / "public/diagrams/sequence"
@@ -882,3 +882,182 @@ def test_run_prints_the_unlinked_activity_diagrams_as_a_worklist(tmp_path: pathl
     assert "173 copied" not in printed  # sanity: this fixture has 2, not the real dataset
     assert "2 copied, 1 linked to a process, 1 unlinked" in printed
     assert "  - zuordnung_eines_bilanzkreises_zur_aufnah-" in printed
+
+
+def test_a_pid_carries_the_anwendungsfall_the_official_list_gives_it() -> None:
+    """makorele#52: the number alone does not say what a PID is for.
+
+    "55001" tells a reader nothing about whether it is theirs; "55001 Anmeldung verb. MaLo" does. The
+    name was already in the data — `anwendungsfall` on each `pid_mappings` row — and simply was not
+    carried into the payload, so the webapp had nothing to show.
+    """
+    detail = build_detail(
+        {
+            "process": {"id": "lieferbeginn", "name": "Lieferbeginn"},
+            "sequence_diagram": {
+                "participants": ["LFN", "NB"],
+                "steps": [
+                    {"nr": 1, "sender": "LFN", "receiver": "NB", "message": "Anmeldung", "pid_refs": [55001, 55077]}
+                ],
+            },
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung verb. MaLo"},
+                {"prüfidentifikator": "55077", "anwendungsfall": "Anmeldung erz. MaLo"},
+            ],
+        },
+        review_notes=[],
+    )
+    assert [(row["pid"], row["name"]) for row in detail["pids"]] == [
+        (55001, "Anmeldung verb. MaLo"),
+        (55077, "Anmeldung erz. MaLo"),
+    ]
+
+
+def test_a_pid_with_no_row_in_the_list_reports_no_name_rather_than_an_empty_one() -> None:
+    """`None` and `""` mean different things to whoever renders the label: "the list has no row for
+    this number" is a data gap worth seeing, an empty string is a name."""
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [99999]}]},
+            "pid_mappings": [{"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"}],
+        },
+        review_notes=[],
+    )
+    assert detail["pids"] == [{"nr": 1, "pid": 99999, "name": None, "message": "m", "format": None}]
+
+
+def test_a_pid_whose_rows_disagree_keeps_the_first_spelling() -> None:
+    """The real instance: of the 429 named PIDs in dataset v0.0.15, exactly two disagree across their
+    rows, and both disagreements are a typo rather than a meaning — 55672 reads "erz. Malo" on one
+    row and "erz.. MaLo" on another; 19101 differs by a double space.
+
+    So one spelling has to win, and it has to be the same one every build: the label has a single
+    line, and joining two spellings of one name would put text in it that no document contains.
+    """
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [55672]}]},
+            "pid_mappings": [
+                {
+                    "prüfidentifikator": "55672",
+                    "anwendungsfall": "Abr.-Daten BK-Abr. erz. Malo",
+                    "zuordnung_objekt": "ZO-T1",
+                },
+                {
+                    "prüfidentifikator": "55672",
+                    "anwendungsfall": "Abr.-Daten BK-Abr. erz.. MaLo",
+                    "zuordnung_objekt": "ZO-T2",
+                },
+            ],
+        },
+        review_notes=[],
+    )
+    assert [row["name"] for row in detail["pids"]] == ["Abr.-Daten BK-Abr. erz. Malo"]
+
+
+def test_a_non_numeric_value_does_not_raise_on_the_way_in() -> None:
+    """Defensive, and labelled as such: every `prüfidentifikator` in v0.0.15 is an integer.
+
+    The API-path markers ("/steuerbefehl/konfig") live in the *Anwendungsfall* column, on rows whose
+    number is 0 — see the test for that below. This one only says that a text column being text
+    cannot take a build down.
+    """
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [55001]}]},
+            "pid_mappings": [
+                {"prüfidentifikator": "/steuerbefehl/konfig", "anwendungsfall": "Etwas"},
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"},
+            ],
+        },
+        review_notes=[],
+    )
+    assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
+
+
+def test_every_diagram_of_a_multi_sd_process_gets_the_names_too() -> None:
+    """The per-diagram tables and the primary mirror are built by the same function, and a name that
+    appears on only one of them is worse than none."""
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "diagrams": [
+                {
+                    "slug": "a",
+                    "name": "A",
+                    "participants": [],
+                    "steps": [{"nr": 1, "message": "m", "pid_refs": [55001]}],
+                },
+                {
+                    "slug": "b",
+                    "name": "B",
+                    "participants": [],
+                    "steps": [{"nr": 1, "message": "m", "pid_refs": [55001]}],
+                },
+            ],
+            "pid_mappings": [{"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"}],
+        },
+        review_notes=[],
+    )
+    assert [row["name"] for diagram in detail["diagrams"] for row in diagram["pids"]] == ["Anmeldung", "Anmeldung"]
+    assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
+
+
+def test_a_pruefidentifikator_of_zero_is_not_a_pid() -> None:
+    """The guard that actually fires on the corpus, and it was untested.
+
+    Nine rows in v0.0.15 carry `prüfidentifikator: 0` — API-path processes whose official-list entry
+    lives in the *Anwendungsfall* column ("/steuerbefehl/initialZustand/", "/maloID/request/") with
+    no number of its own. Admitting 0 would put an API path in the map under a number no step
+    references, and `if raw is None or not name` — the obvious rewrite — does exactly that.
+    """
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [0, 55001]}]},
+            "pid_mappings": [
+                {"prüfidentifikator": 0, "anwendungsfall": "/steuerbefehl/initialZustand/"},
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"},
+            ],
+        },
+        review_notes=[],
+    )
+    assert [(row["pid"], row["name"]) for row in detail["pids"]] == [(0, None), (55001, "Anmeldung")]
+
+
+def test_a_blank_name_does_not_claim_the_number() -> None:
+    """First-row-wins is only safe if a nameless row is not a row: otherwise a blank Anwendungsfall
+    takes the number and blocks the later row that has the name, turning a real name into the empty
+    string `None` exists to be distinguished from."""
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [55001]}]},
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": ""},
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"},
+            ],
+        },
+        review_notes=[],
+    )
+    assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
+
+
+def test_a_whitespace_only_name_does_not_claim_the_number_either() -> None:
+    """Same defect wearing a space: `" "` is truthy, so without the strip it claims the number and
+    the label renders blank."""
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [55001]}]},
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "   "},
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"},
+            ],
+        },
+        review_notes=[],
+    )
+    assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
