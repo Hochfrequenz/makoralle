@@ -845,3 +845,96 @@ def test_deadline_tag_says_werktaeglich_when_the_source_does() -> None:
     assert _deadline_tag(DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")) == (
         "{werktäglich}"
     )
+
+
+def test_a_diagram_whose_every_step_is_dropped_emits_no_fragment_skeleton() -> None:
+    """makoralle#38: fragments were opened before the emitter decided the step was undrawable.
+
+    A diagram in which nothing was read yielded ``alt Bedingung 1 / else Bedingung 2 / end`` and
+    nothing else — a fragment around no messages, which the renderer may or may not accept and
+    which says nothing either way. Empty *branches* stay deliberate (``_open_lines`` reconstructs
+    the labels of empty leading and trailing branches, and that is tested); it is opening a
+    fragment for steps that never get emitted that is wrong.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[
+            SDStep(nr=1, sender="?", receiver="?", message="Eins"),
+            SDStep(nr=2, sender="?", receiver="?", message="Zwei"),
+        ],
+        fragments=[
+            SDFragment(
+                type="alt",
+                branches=[
+                    SDBranch(condition="Bedingung 1", step_nrs=[1]),
+                    SDBranch(condition="Bedingung 2", step_nrs=[2]),
+                ],
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert not [line for line in lines if line.startswith(("alt ", "else ", "end"))], lines
+
+
+def test_a_fragment_is_still_opened_for_a_step_that_becomes_a_note() -> None:
+    """The boundary: undrawable as an *arrow* is not undrawable. A step that spans the diagram or
+    becomes a one-sided note is inside its branch, so the branch must be there."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Bedingung 1", step_nrs=[1])])],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "alt Bedingung 1" in lines
+    assert "end" in lines
+    note = next(line for line in lines if line.startswith("note over"))
+    assert lines.index("alt Bedingung 1") < lines.index(note) < lines.index("end")
+
+
+def test_a_fragment_survives_for_a_dropped_step_that_still_carries_a_readable_note() -> None:
+    """No lane, no endpoint — but the note names an actor, so something *is* drawn in the branch."""
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        notes=[SDNote(position="over", participants=["NB"], text="Hinweis", after_step=1)],
+        fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Bedingung 1", step_nrs=[1])])],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "alt Bedingung 1" in lines
+    assert "note over NB: Hinweis" in lines
+
+
+def test_an_empty_leading_branch_still_keeps_its_label() -> None:
+    """The behaviour this must not break: a fragment with drawable steps keeps every branch label,
+    including the empty ones — which is why the fix is not "never emit an empty branch"."""
+    sd = SequenceDiagram(
+        participants=["LF", "NB"],
+        steps=[SDStep(nr=1, sender="LF", receiver="NB", message="Eins")],
+        fragments=[
+            SDFragment(
+                type="alt",
+                branches=[
+                    SDBranch(condition="Leer", step_nrs=[]),
+                    SDBranch(condition="Voll", step_nrs=[1]),
+                ],
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "alt Leer" in lines
+    assert "else Voll" in lines
+
+
+def test_a_step_naming_an_actor_no_participant_declares_is_still_drawn() -> None:
+    """The lane list and the endpoints can disagree, and then the endpoints win.
+
+    p08 writes ``participants=["?"]`` for a diagram in which it read no actor, so `known_lanes` can
+    be empty while a step still names one. Skipping such a step because there is no lane would
+    delete the only readable thing in the diagram — so the endpoint, not the lane list, decides.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="MSB", receiver="?", message="Mitteilung")],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over MSB: (!) 1. Mitteilung — Gegenstelle ungelesen  [REVIEW]" in lines
