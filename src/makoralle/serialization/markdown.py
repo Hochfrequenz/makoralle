@@ -53,7 +53,8 @@ def _wrap_text(text: str, max_len: int = 80) -> str:
 #: light fill, base vs dark: accept 1.94 vs 4.87, reject 1.42 vs 5.79, info 1.31 vs 5.91 — the base
 #: token would have left `accept` exactly as invisible as the raw `#ccffcc/#00cc00` pair it
 #: replaces (1.94) and made `reject` worse than the `#ffcccc/#cc0000` it replaces (4.14 -> 1.42).
-#: Every class is now more legible than what it replaces, and they are legible to the same degree.
+#: Every class is more legible than what it replaces, and the three hued ones are legible to the
+#: same degree (4.87 / 5.79 / 5.91). `unknown` is not, deliberately — see below.
 #:
 #: `unknown` is the exception on purpose: the palette's neutral grey with the soft-black ink, so
 #: that an outcome the source did not classify reads as *outlined but uncoloured* rather than as a
