@@ -957,9 +957,13 @@ def test_a_pid_whose_rows_disagree_keeps_the_first_spelling() -> None:
     assert [row["name"] for row in detail["pids"]] == ["Abr.-Daten BK-Abr. erz. Malo"]
 
 
-def test_a_non_numeric_marker_in_the_pid_column_is_not_a_pid() -> None:
-    """The Prüfidentifikator column also carries markers like "/steuerbefehl/konfig", which are not
-    numbers and must not raise on the way in."""
+def test_a_non_numeric_value_does_not_raise_on_the_way_in() -> None:
+    """Defensive, and labelled as such: every `prüfidentifikator` in v0.0.15 is an integer.
+
+    The API-path markers ("/steuerbefehl/konfig") live in the *Anwendungsfall* column, on rows whose
+    number is 0 — see the test for that below. This one only says that a text column being text
+    cannot take a build down.
+    """
     detail = build_detail(
         {
             "process": {"id": "p"},
@@ -999,4 +1003,61 @@ def test_every_diagram_of_a_multi_sd_process_gets_the_names_too() -> None:
         review_notes=[],
     )
     assert [row["name"] for diagram in detail["diagrams"] for row in diagram["pids"]] == ["Anmeldung", "Anmeldung"]
+    assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
+
+
+def test_a_pruefidentifikator_of_zero_is_not_a_pid() -> None:
+    """The guard that actually fires on the corpus, and it was untested.
+
+    Nine rows in v0.0.15 carry `prüfidentifikator: 0` — API-path processes whose official-list entry
+    lives in the *Anwendungsfall* column ("/steuerbefehl/initialZustand/", "/maloID/request/") with
+    no number of its own. Admitting 0 would put an API path in the map under a number no step
+    references, and `if raw is None or not name` — the obvious rewrite — does exactly that.
+    """
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [0, 55001]}]},
+            "pid_mappings": [
+                {"prüfidentifikator": 0, "anwendungsfall": "/steuerbefehl/initialZustand/"},
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"},
+            ],
+        },
+        review_notes=[],
+    )
+    assert [(row["pid"], row["name"]) for row in detail["pids"]] == [(0, None), (55001, "Anmeldung")]
+
+
+def test_a_blank_name_does_not_claim_the_number() -> None:
+    """First-row-wins is only safe if a nameless row is not a row: otherwise a blank Anwendungsfall
+    takes the number and blocks the later row that has the name, turning a real name into the empty
+    string `None` exists to be distinguished from."""
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [55001]}]},
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": ""},
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"},
+            ],
+        },
+        review_notes=[],
+    )
+    assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
+
+
+def test_a_whitespace_only_name_does_not_claim_the_number_either() -> None:
+    """Same defect wearing a space: `" "` is truthy, so without the strip it claims the number and
+    the label renders blank."""
+    detail = build_detail(
+        {
+            "process": {"id": "p"},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [55001]}]},
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "   "},
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"},
+            ],
+        },
+        review_notes=[],
+    )
     assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]

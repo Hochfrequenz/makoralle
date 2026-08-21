@@ -113,21 +113,35 @@ def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
     `pid_mappings` row — and was simply not carried into the payload.
 
     One PID can appear on several rows — a different Zuordnungsobjekt or Objekteigenschaft per row —
-    almost always with the same Anwendungsfall. Exactly two of the 429 named PIDs in dataset v0.0.15
-    disagree, and both disagreements are a typo rather than a meaning: 55672 reads "Abr.-Daten
-    BK-Abr. erz. Malo" on one row and "erz.. MaLo" on another, 19101 differs by a double space. So
-    the first row wins: the label has one line to live on, and joining two spellings of one name
-    would put text in it that no document contains.
+    almost always with the same Anwendungsfall. Two of the 429 named PIDs in dataset v0.0.15 disagree
+    and both disagreements are a typo rather than a meaning: 19101 reads "Ablehnung der Anfrage␣␣
+    Stammdaten" on one row and one space on the other, 55672 "Abr.-Daten BK-Abr. erz. Malo" against
+    "erz.. MaLo". So the first row wins — the label has one line to live on, and joining two
+    spellings of one name would put text in it that no document contains.
+
+    This map is built per process, which matters for exactly one of those two: 19101's rows are both
+    in `geschäftsdatenanfrage`, so `setdefault` really does resolve it, while 55672's two spellings
+    sit in two different processes and each keeps its own. Nothing joins across processes, so a PID
+    cannot pick up a name from a process that does not reference it.
+
+    A row whose Prüfidentifikator is **0** is not a PID: the 9 such rows in v0.0.15 describe API
+    paths (`/steuerbefehl/initialZustand/`, `/maloID/request/`) which the official list carries in
+    the *Anwendungsfall* column with no number of their own. They contribute no name, and no step
+    references PID 0.
     """
     names: dict[int, str] = {}
     for row in mappings:
         raw = row.get("prüfidentifikator")
         name = (row.get("anwendungsfall") or "").strip()
+        # `not raw` is what fires on the corpus: it rejects Prüfidentifikator 0, the placeholder on
+        # the nine API-path rows. `not name` matters too — a blank Anwendungsfall claiming the number
+        # would block a later row that has one, turning a real name into the empty string this
+        # function is careful to distinguish from "no row".
         if not raw or not name:
             continue
         try:
             number = int(str(raw).strip())
-        except ValueError:  # a non-numeric marker like "/steuerbefehl/konfig" is not a PID
+        except ValueError:  # defensive: every value in v0.0.15 is an integer, but the column is text
             continue
         names.setdefault(number, name)
     return names
