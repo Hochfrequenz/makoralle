@@ -156,7 +156,7 @@ def uc_sd_section_groups(segmented: dict[str, Any]) -> dict[str, list[dict[str, 
             # side of the SD collision makorele#113 fixes — so whoever reads it in a pipeline log
             # should look there first rather than for corrupted data.
             logger.warning("two use cases slug to %r; their SDs will share one group: %r", process_id, u.get("heading"))
-        out[process_id] = out.get(process_id, [])
+        out.setdefault(process_id, [])
     for s in secs:
         h = s.get("heading", "")
         if "SD:" not in h:
