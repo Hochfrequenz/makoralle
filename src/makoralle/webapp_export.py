@@ -114,21 +114,22 @@ def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
 
     One PID can appear on several rows — a different Zuordnungsobjekt or Objekteigenschaft per row —
     almost always with the same Anwendungsfall. Two of the 429 named PIDs in dataset v0.0.15 disagree
-    and both disagreements are a typo rather than a meaning: 19101 reads "Ablehnung der Anfrage␣␣
-    Stammdaten" on one row and one space on the other, 55672 "Abr.-Daten BK-Abr. erz. Malo" against
-    "erz.. MaLo". So the first row wins — the label has one line to live on, and joining two
-    spellings of one name would put text in it that no document contains.
+    and both disagreements are a typo rather than a meaning: 19101 has three rows and reads "Ablehnung
+    der Anfrage␣␣Stammdaten" on the first, one space on the other two; 55672 reads "Abr.-Daten
+    BK-Abr. erz. Malo" against "erz.. MaLo". So the first row wins — the label has one line to live
+    on, and joining two spellings of one name would put text in it that no document contains. Note
+    what that means here: the row that wins is the one carrying the double space, because it is the
+    one the file lists first.
 
-    This map is built per process, which matters for exactly one of those two: 19101's rows are both
-    in `geschäftsdatenanfrage`, so `setdefault` really does resolve it, while 55672's two spellings
+    This map is built per process, which matters for exactly one of those two: 19101's three rows are
+    all in `geschäftsdatenanfrage`, so `setdefault` really does resolve it, while 55672's two spellings
     sit in two different processes and each keeps its own. Nothing joins across processes, so a PID
     cannot pick up a name from a process that does not reference it.
 
     Per *process*, though, and not per diagram: 57 (process, PID) pairs in v0.0.15 have rows under
     more than one `bezeichnung_sequenzdiagramm`, and **56** of the 57 carry the same name in each.
-    The 57th is 19101 again — three rows in `geschäftsdatenanfrage` under three bezeichnungen, two of
-    them the single-space spelling and one the double-space typo — which is the same conflict named
-    two paragraphs above, and `setdefault` resolves it the same way. So nothing is mis-attributed
+    The 57th is 19101 again — those same three rows, under `Geschäftsdatenanfrage`, `… vom LF an NB`
+    and `… vom MSB an NB` — which is the conflict named two paragraphs above, resolved the same way. So nothing is mis-attributed
     today, but only because the one disagreement is whitespace: a row is not required to describe the
     diagram whose step carries the number, and a real disagreement there would resolve to whichever
     row the file happens to list first.
