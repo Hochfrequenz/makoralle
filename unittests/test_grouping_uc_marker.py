@@ -2,7 +2,7 @@
 
 `grouping` keyed on the literal ``"UC:"``. The documents are not consistent about it: measured over
 the 379 headings of `BK6-24-174_MaBiS_Lesefassung.pdf`, ``UC:`` appears 101 times (the leaf
-section), ``Use-Case:`` 105 times (its parent, and the *only* marker on four use cases), and
+section), ``Use-Case:`` 104 times (its parent, and the *only* marker on four use cases), and
 ``Use Case:`` once. A use case whose only marker is the long spelling got no grouping entry at all,
 so its SDs fell back to fuzzy matching.
 
@@ -12,7 +12,10 @@ otherwise every use case would produce two keys, one per spelling, which is a fa
 the four sections this is about.
 """
 
+import logging
 from typing import Any
+
+import pytest
 
 from makoralle.grouping import UC_HEADING_MARKER, uc_process_id, uc_sd_section_groups
 
@@ -142,3 +145,61 @@ def test_the_leaf_marker_tolerates_the_spacing_and_case_the_toc_uses() -> None:
     )
     assert list(groups) == ["etwas_genauer"]
     assert [s["section_id"] for s in groups["etwas_genauer"]] == ["6.5.2"]
+
+
+def test_a_numeric_neighbour_is_not_a_descendant() -> None:
+    """`6.10` is not below `6.1`, and the trailing dot in the subtree check is what says so.
+
+    Review found this revertible with a green suite: with `startswith(section_id)` instead of
+    `startswith(f"{section_id}.")`, the use case at 6.1 sees 6.10's claimed leaf as its own and
+    yields — so its group, its process id and its diagram disappear, and its SD falls back to fuzzy
+    matching. Losing a process to its numeric neighbour is the regression this whole change exists
+    to avoid.
+    """
+    groups = uc_sd_section_groups(
+        _sections(
+            ("6.1", "6.1 Use-Case: Alpha"),
+            ("6.1.2", "6.1.2 SD: Alpha"),
+            ("6.10", "6.10 Use-Case: Beta"),
+            ("6.10.1", "6.10.1 UC: Beta"),
+            ("6.10.2", "6.10.2 SD: Beta"),
+        )
+    )
+    assert sorted(groups) == ["alpha", "beta"]
+    assert [s["section_id"] for s in groups["alpha"]] == ["6.1.2"]
+    assert [s["section_id"] for s in groups["beta"]] == ["6.10.2"]
+
+
+def test_two_nested_fallback_sections_do_not_depend_on_the_order_they_arrive_in() -> None:
+    """The fallback loop appends to the same dict its guard reads, so a live read makes the answer
+    depend on section order — and the real segmented documents are not ordered (MaBiS has 6
+    backwards section-id transitions, WiM Teil 2 has 9). Snapshotting the leaf pass's keys makes
+    both orders answer the same.
+    """
+    pairs = [
+        ("6.8", "6.8 Use-Case: Outer"),
+        ("6.8.2", "6.8.2 Use-Case: Inner"),
+        ("6.8.2.1", "6.8.2.1 SD: Inner"),
+        ("6.8.3", "6.8.3 SD: Outer"),
+    ]
+    forward = uc_sd_section_groups(_sections(*pairs))
+    backward = uc_sd_section_groups(_sections(*reversed(pairs)))
+    assert forward == backward
+    assert sorted(forward) == ["inner", "outer"]
+
+
+def test_two_use_cases_that_slug_the_same_are_reported(caplog: pytest.LogCaptureFixture) -> None:
+    """One group where the documents describe two processes — silent before, because `out` is keyed
+    by slug and the second simply appended to the first."""
+    with caplog.at_level(logging.WARNING, logger="makoralle.grouping"):
+        groups = uc_sd_section_groups(
+            _sections(
+                ("3.1", "3.1 Use-Case: Anmeldung"),
+                ("3.1.1", "3.1.1 UC: Anmeldung"),
+                ("3.1.2", "3.1.2 SD: Anmeldung"),
+                ("9.4", "9.4 Use-Case: Anmeldung"),
+                ("9.4.1", "9.4.1 SD: Anmeldung Variante"),
+            )
+        )
+    assert list(groups) == ["anmeldung"]
+    assert [record for record in caplog.records if "slug the same" in record.message or "slug to" in record.message]

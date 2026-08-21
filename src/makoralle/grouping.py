@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 #: What makes a heading a use case. The documents spell the marker three ways — measured over the
 #: 379 headings of ``BK6-24-174_MaBiS_Lesefassung.pdf``: ``UC:`` 101x (the leaf section),
-#: ``Use-Case:`` 105x (its parent, and the only marker on four use cases), ``Use Case:`` once
+#: ``Use-Case:`` 104x (its parent, and the only marker on four use cases), ``Use Case:`` once
 #: (10.2) — and the table of contents prints them upper-cased, hence the case-insensitive match.
 #: The same pattern as ``makorele.pipeline.wrapped_text.UC_HEADING_MARKER``, which is the other
 #: half of makoralle#28; that repo should import this one rather than keep its copy.
@@ -126,17 +126,34 @@ def uc_sd_section_groups(segmented: dict[str, Any]) -> dict[str, list[dict[str, 
     # colon, which is not a marker). Its SDs are its *children*, so it keys on its own section id
     # rather than its parent's — and only where the leaf pass claimed nothing, so a use case with
     # both spellings still produces one group.
+    # Snapshotted, not read live: the loop appends to `ucs`, so testing the guard against the
+    # growing dict would make the answer depend on the order the sections arrive in — and they do
+    # arrive out of order (every real segmented document has a handful of backwards section-id
+    # transitions). With two nested long-marker sections and no leaf under either, a document-order
+    # read gives both a group and a reversed read gives only the inner one.
+    claimed = set(ucs)
     for s in secs:
         heading = s.get("heading", "")
         if LEAF_UC_MARKER.search(heading) or not UC_HEADING_MARKER.search(heading):
             continue
         section_id = s["section_id"]
-        if section_id in ucs or any(other.startswith(f"{section_id}.") for other in ucs):
+        # The trailing dot is the guard, not decoration: without it "6.10" reads as a descendant of
+        # "6.1", and a use case at 6.1 with no leaf loses its group — and its diagram — to its
+        # numeric neighbour.
+        if section_id in claimed or any(other.startswith(f"{section_id}.") for other in claimed):
             continue
         ucs[section_id] = s
 
     # Every UC becomes a key (authoritative map), even if it has no SD siblings.
-    out: dict[str, list[dict[str, Any]]] = {uc_process_id(u["heading"]): [] for u in ucs.values()}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for u in ucs.values():
+        process_id = uc_process_id(u["heading"])
+        if process_id in out:
+            # Two use cases whose headings slug the same: their SDs land in one group and the
+            # webapp shows one process where the documents describe two. Absent from all seven
+            # segmented documents measured, and silent if it ever arrives — hence the warning.
+            logger.warning("two use cases slug to %r; their SDs will share one group: %r", process_id, u.get("heading"))
+        out[process_id] = out.get(process_id, [])
     for s in secs:
         h = s.get("heading", "")
         if "SD:" not in h:
