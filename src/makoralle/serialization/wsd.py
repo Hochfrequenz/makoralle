@@ -89,15 +89,27 @@ def _clean_note_text(text: str) -> str:
     return " ".join((text or "").split())
 
 
-def _deadline_note(step: SDStep, participants: list[str]) -> str | None:
-    """A flagged review note for a complex (unstructured) deadline, or None.
+def _deadline_note(step: SDStep, known_lanes: list[str]) -> str | None:
+    """The note for a Frist that only exists as prose, or None.
+
+    Two kinds, and they are not the same claim: a ``complex`` rule gets ``(!) … [REVIEW]``, because
+    nobody has structured it yet and the worklist should say so, while a ``reference`` rule gets an
+    unflagged ``(i)`` — it is real but irreducible, pointing at another table or a contract, and
+    putting it on the "Prüfung nötig" list would ask for work that cannot be done.
 
     The note anchors to the same lifeline the step's arrow uses: for a ``ref``
     subprocess step that is the sender lifeline (via ``_ref_lifeline``), since
-    Vision often mis-guesses the receiver of a ref."""
+    Vision often mis-guesses the receiver of a ref.
+
+    A step with neither endpoint read has no lifeline at all, and the note used to be
+    dropped with it — silently, which is the outcome ``_append_unplaceable`` exists to
+    avoid. The unstructured text is the part a human needs in order to structure it, and
+    exactly what ``extract_review_notes`` puts on the "Prüfung nötig" worklist, so it
+    spans the diagram alongside the step instead (makoralle#37)."""
     dl = step.deadline_rule
     if not dl or dl.type not in ("complex", "reference") or not dl.raw:
         return None
+    spanning = False
     if _has_ref_prefix(step.message):
         # The historical rule, on purpose: the broader is_ref_step would move this note
         # from the receiver to the sender for a step that carries only the other marker,
@@ -106,14 +118,28 @@ def _deadline_note(step: SDStep, participants: list[str]) -> str | None:
     else:
         who = step.receiver if is_known_actor(step.receiver) else step.sender
     if not is_known_actor(who):
-        return None
+        if not known_lanes:
+            # No lane either, so nothing to hang the Frist on. Silent on purpose: whoever got here
+            # has already had the step itself dropped — by the loop's own skip, or by
+            # `_append_unplaceable` when one of the step's notes named an actor and kept the
+            # fragment open — and `_log_dropped` names the lost Frist in that one line. A second
+            # warning for one loss would be a second thing to count.
+            return None
+        who = span_of_lanes(known_lanes)
+        spanning = True
     text = _clean_note_text(dl.raw)
     # A "reference" deadline is real but irreducible (points to another table/SD/
     # contract, or is conditional): keep it visible as an (i) note, but WITHOUT the
     # [REVIEW] flag so extract_review_notes never surfaces it as "Prüfung nötig".
+    # "right of" takes one participant, so a span has to be "over" — and the flag says which case
+    # this is rather than the string being asked whether it holds a comma. An actor named with a
+    # comma would answer that wrongly, and although no such actor exists (nor could be declared as
+    # a participant), a placement decided by punctuation inside a name is a coincidence, not a rule.
+    # A one-lane span goes "over" as well, so the Frist sits the way the step it belongs to sits.
+    placement = "over" if spanning else "right of"
     if dl.type == "reference":
-        return f"note right of {who}: (i) Frist: {text}"
-    return f"note right of {who}: (!) Frist: {text}  [REVIEW]"
+        return f"note {placement} {who}: (i) Frist: {text}"
+    return f"note {placement} {who}: (!) Frist: {text}  [REVIEW]"
 
 
 def _build_step_paths(fragments: list[SDFragment]) -> dict[int, list[tuple[SDFragment, int]]]:
@@ -197,7 +223,7 @@ def _unknown_endpoint_note(step: SDStep, text: str) -> str | None:
     return f"note over {who}: (!) {_clean_note_text(text)} — Gegenstelle ungelesen  [REVIEW]"
 
 
-def _append_unplaceable(lines: list[str], text: str, known_lanes: list[str], nr: int) -> None:
+def _append_unplaceable(lines: list[str], text: str, known_lanes: list[str], step: SDStep) -> None:
     """Note a step whose endpoints are both unread, spanning the outermost lanes.
 
     Anchoring on one lane would file the step under an actor it may have nothing to do
@@ -212,15 +238,35 @@ def _append_unplaceable(lines: list[str], text: str, known_lanes: list[str], nr:
     and the step is not.
     """
     if not known_lanes:
-        _log_dropped(nr)
+        _log_dropped(step)
         return
     body = _clean_note_text(text)
     lines.append(f"note over {span_of_lanes(known_lanes)}: (!) {body} — beide Endpunkte ungelesen  [REVIEW]")
 
 
-def _log_dropped(nr: int) -> None:
-    """One wording for one event, wherever it is decided."""
-    logger.warning("dropping step %s from the diagram: no endpoint and no lane is known", nr)
+def _log_dropped(step: SDStep) -> None:
+    """One wording for one event, wherever it is decided.
+
+    A Frist that only exists as prose is named in the same line rather than in a second warning:
+    with no endpoint and no lane it has nowhere to go either, and it is the text a human needs in
+    order to structure it (makoralle#37). Two warnings for one loss would be two things to count.
+
+    "Only as prose" covers both `complex` (nobody has structured it yet) and `reference` (real but
+    irreducible — it points at another table or a contract). A `terminiert` or `unverzüglich` rule is
+    not named: it survives the drop as structure, so reporting it would announce a loss that did not
+    happen.
+    """
+    dl = step.deadline_rule
+    raw = dl.raw if dl and dl.type in ("complex", "reference") else None
+    if raw:
+        logger.warning(
+            "dropping step %s from the diagram: no endpoint and no lane is known; its unstructured "
+            "Frist %r goes with it",
+            step.nr,
+            raw,
+        )
+        return
+    logger.warning("dropping step %s from the diagram: no endpoint and no lane is known", step.nr)
 
 
 def _draws_nothing(step: SDStep, known_lanes: list[str], notes: list[SDNote]) -> bool:
@@ -334,7 +380,7 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             # Before the fragment bookkeeping, or the branch is opened for a step that never
             # arrives. Nothing else attached to the step draws either: its deadline note has no
             # lifeline and no lane, and its notes name no actor.
-            _log_dropped(step.nr)
+            _log_dropped(step)
             continue
         target = paths.get(step.nr, [])
 
@@ -415,7 +461,7 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             else:
                 # The box names no lifeline of its own, and no lane may stand in for one,
                 # so it is spanned like any other unplaceable step.
-                _append_unplaceable(lines, f"{step.nr}. {msg}{suffix}", known_lanes, step.nr)
+                _append_unplaceable(lines, f"{step.nr}. {msg}{suffix}", known_lanes, step)
         else:
             text = f"{step.nr}. {msg}{suffix}"
             unknown = _unknown_endpoint_note(step, text)
@@ -425,9 +471,9 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
             elif is_known_actor(step.sender) and is_known_actor(step.receiver):
                 lines.append(f"{step.sender}{_arrow(step)}{step.receiver}: {text}")
             else:
-                _append_unplaceable(lines, text, known_lanes, step.nr)
+                _append_unplaceable(lines, text, known_lanes, step)
 
-        dl_note = _deadline_note(step, sd.participants)
+        dl_note = _deadline_note(step, known_lanes)
         if dl_note:
             lines.append(dl_note)
 

@@ -987,3 +987,169 @@ def test_the_other_drop_path_is_audible_too(caplog: pytest.LogCaptureFixture) ->
     assert "note over NB: Hinweis" in lines
     assert not [line for line in lines if "Eins" in line]
     assert [record for record in caplog.records if "dropping step 1" in record.message]
+
+
+def test_an_unplaceable_step_keeps_its_unstructured_frist(caplog: pytest.LogCaptureFixture) -> None:
+    """makoralle#37: the step spans the diagram, and its complex Frist used to vanish with it.
+
+    ``_deadline_note`` anchors on a lifeline, and a step with neither endpoint read has none — so
+    it returned ``None`` and the raw Frist text was dropped without a word. That text is the whole
+    point: it is unstructured *because* a human still has to structure it, and it is exactly what
+    ``extract_review_notes`` puts on the "Prüfung nötig" worklist. So it spans the diagram with the
+    step it belongs to.
+    """
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[
+            SDStep(
+                nr=1,
+                sender="?",
+                receiver="?",
+                message="ref Etwas",
+                deadline_rule=DeadlineRule(type="complex", raw="Frist X"),
+            )
+        ],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        lines = emit_wsd(sd).splitlines()
+    assert "note over NB,MSB: (!) 1. ref Etwas — beide Endpunkte ungelesen  [REVIEW]" in lines
+    assert "note over NB,MSB: (!) Frist: Frist X  [REVIEW]" in lines
+    assert not caplog.records  # nothing was lost, so nothing to warn about
+
+
+def test_an_unplaceable_frist_reaches_the_worklist() -> None:
+    """End to end with the consumer, because "visible in the diagram" is not the requirement."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[
+            SDStep(
+                nr=1,
+                sender="?",
+                receiver="?",
+                message="Etwas",
+                deadline_rule=DeadlineRule(type="complex", raw="unverzüglich, jedoch spätester ÜT ist der 5. WT"),
+            )
+        ],
+    )
+    assert "(!) Frist: unverzüglich, jedoch spätester ÜT ist der 5. WT" in extract_review_notes(emit_wsd(sd))
+
+
+def test_an_unplaceable_reference_frist_stays_unflagged_when_it_spans() -> None:
+    """A ``reference`` deadline is real but irreducible, so it must not reach the worklist —
+    the spanning fallback must not quietly promote it to a review item."""
+    sd = SequenceDiagram(
+        participants=["NB", "MSB"],
+        steps=[
+            SDStep(
+                nr=1,
+                sender="?",
+                receiver="?",
+                message="Etwas",
+                deadline_rule=DeadlineRule(type="reference", raw="siehe Vertrag"),
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over NB,MSB: (i) Frist: siehe Vertrag" in lines
+    assert not [note for note in extract_review_notes(emit_wsd(sd)) if "Vertrag" in note]
+
+
+def test_a_frist_with_no_lane_at_all_is_dropped_loudly(caplog: pytest.LogCaptureFixture) -> None:
+    """With no lane the step itself is already dropped; the Frist goes the same way, and the one
+    warning that reports the drop names it — a silent drop is what #37 is about.
+
+    One line, not two: the loss is one event. `_log_dropped` carries the Frist text so that the
+    thing a human needs in order to structure it is in the log rather than nowhere.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[
+            SDStep(
+                nr=1,
+                sender="?",
+                receiver="?",
+                message="Etwas",
+                deadline_rule=DeadlineRule(type="complex", raw="Frist X"),
+            )
+        ],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        lines = emit_wsd(sd).splitlines()
+    assert not [line for line in lines if "Frist X" in line]
+    assert [record for record in caplog.records if "Frist" in record.message]
+
+
+def test_a_note_keeps_the_fragment_and_the_frist_is_still_reported_once(caplog: pytest.LogCaptureFixture) -> None:
+    """The one path that reaches `_deadline_note`'s no-lane branch: the step draws nothing, but one
+    of its notes names an actor, so the loop does not skip it and `_append_unplaceable` drops it.
+
+    The Frist has nowhere to go there either, and it must be reported exactly once — the drop line
+    carries it, and the Frist branch stays silent so the loss is not counted twice.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[
+            SDStep(
+                nr=1,
+                sender="?",
+                receiver="?",
+                message="Etwas",
+                deadline_rule=DeadlineRule(type="complex", raw="Frist X"),
+            )
+        ],
+        notes=[SDNote(position="over", participants=["?", "NB"], text="Hinweis", after_step=1)],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        lines = emit_wsd(sd).splitlines()
+    assert "note over NB: Hinweis" in lines
+    assert not [line for line in lines if "Frist X" in line]
+    assert len([record for record in caplog.records if "Frist X" in record.message]) == 1
+
+
+def test_a_structured_rule_is_not_reported_as_a_lost_frist(caplog: pytest.LogCaptureFixture) -> None:
+    """`raw` exists on structured rules too, and losing one of those is not the same event.
+
+    A `terminiert`/`unverzüglich` rule survives the drop as data — the step is gone from the diagram
+    but its tag was derivable from structure — so naming it in the warning would report a loss that
+    did not happen and bury the one that did.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[
+            SDStep(
+                nr=1,
+                sender="?",
+                receiver="?",
+                message="Etwas",
+                deadline_rule=DeadlineRule(type="unverzüglich", raw="unverzüglich", business_days=5),
+            )
+        ],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        emit_wsd(sd)
+    assert [record for record in caplog.records if "dropping step 1" in record.message]
+    assert not [record for record in caplog.records if "Frist" in record.message]
+
+
+def test_a_one_lane_span_puts_the_frist_where_the_step_is() -> None:
+    """A single declared lane spans to itself, so `span_of_lanes` returns a bare name with no comma.
+
+    The step goes ``note over NB``; deciding the Frist's placement by looking for a comma sent it to
+    ``note right of NB`` — two different placements for two halves of the same step. The flag knows
+    it is a span whether or not the name happens to contain punctuation.
+    """
+    sd = SequenceDiagram(
+        participants=["NB"],
+        steps=[
+            SDStep(
+                nr=1,
+                sender="?",
+                receiver="?",
+                message="Etwas",
+                deadline_rule=DeadlineRule(type="complex", raw="Frist X"),
+            )
+        ],
+    )
+    lines = emit_wsd(sd).splitlines()
+    assert "note over NB: (!) 1. Etwas — beide Endpunkte ungelesen  [REVIEW]" in lines
+    assert "note over NB: (!) Frist: Frist X  [REVIEW]" in lines
