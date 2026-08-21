@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
@@ -949,3 +951,39 @@ def test_a_step_naming_an_actor_no_participant_declares_is_still_drawn(sender: s
     )
     lines = emit_wsd(sd).splitlines()
     assert "note over MSB: (!) 1. Mitteilung — Gegenstelle ungelesen  [REVIEW]" in lines
+
+
+def test_a_note_that_names_nothing_readable_does_not_keep_the_fragment(caplog: pytest.LogCaptureFixture) -> None:
+    """The third boundary: a note has to be *drawable*, not merely present.
+
+    `_emit_note` skips a note whose participants are all unreadable when there is no lane to span,
+    so treating "the step has a note" as "something will be drawn" reopens the exact skeleton this
+    change removes — verified: `alt B1 / else B2 / end` around no messages.
+    """
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        notes=[SDNote(position="over", participants=["?"], text="Hinweis", after_step=1)],
+        fragments=[SDFragment(type="alt", branches=[SDBranch(condition="Bedingung 1", step_nrs=[1])])],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        lines = emit_wsd(sd).splitlines()
+    assert not [line for line in lines if line.startswith(("alt ", "else ", "end"))], lines
+    assert "Hinweis" not in "\n".join(lines)
+    # and the drop is audible: a step that leaves no trace in the diagram must leave one in the log
+    assert [record for record in caplog.records if "dropping step 1" in record.message]
+
+
+def test_the_other_drop_path_is_audible_too(caplog: pytest.LogCaptureFixture) -> None:
+    """`_append_unplaceable`'s own drop — reached when a note keeps the fragment but the step itself
+    still has nowhere to go. Both paths go through `_log_dropped`, and neither may go quiet."""
+    sd = SequenceDiagram(
+        participants=["?"],
+        steps=[SDStep(nr=1, sender="?", receiver="?", message="Eins")],
+        notes=[SDNote(position="over", participants=["?", "NB"], text="Hinweis", after_step=1)],
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        lines = emit_wsd(sd).splitlines()
+    assert "note over NB: Hinweis" in lines
+    assert not [line for line in lines if "Eins" in line]
+    assert [record for record in caplog.records if "dropping step 1" in record.message]
