@@ -130,10 +130,9 @@ def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
     more than one `bezeichnung_sequenzdiagramm`, and **56** of the 57 carry the same name in each.
     The 57th is 19101 again — those same three rows, under `Geschäftsdatenanfrage`, `… vom LF an NB`
     and `… vom MSB an NB` — the conflict named two paragraphs above, resolved the same way. So
-    nothing is mis-attributed today, but only because that one disagreement is whitespace: a row
-    need not describe the diagram
-    whose step carries the number, and a real disagreement there would resolve to whichever
-    row the file happens to list first.
+    nothing is mis-attributed today, but only because that one disagreement is whitespace: a row need
+    not describe the diagram whose step carries the number, and a real disagreement there would
+    resolve to whichever row the file happens to list first.
 
     A row whose Prüfidentifikator is **0** is not a PID: the 9 such rows in v0.0.15 describe API
     paths (`/steuerbefehl/initialZustand/`, `/maloID/request/`) which the official list carries in
