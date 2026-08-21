@@ -75,9 +75,9 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     Those two counts are over the space form — ``_has_ref_prefix`` in the WSD emitter, which is
     ``startswith("ref ")`` — and not over what this function accepts. Counting everything it accepts
     gives 119 of 151, and the extra nine are messages spelled ``ref:`` (eight) or ``ref.`` (one),
-    *not* steps recognised through their ``subprocess_ref``: on the released corpus every one of the
-    127 steps carrying a ``subprocess_ref`` also matches :data:`REF_PREFIX`, so that arm of the ``or``
-    below adds nothing here. It stays because the two markers "do not always agree" is a claim about
+    *not* steps recognised through their ``subprocess_ref``: on the released corpus all **119** steps
+    carrying a ``subprocess_ref`` (127 occurrences — a file can print the same step more than once)
+    also match :data:`REF_PREFIX`, so that arm of the ``or`` below adds nothing here. It stays because the two markers "do not always agree" is a claim about
     the parser, not about this corpus — but nobody should expect a diff from touching it.)
     Measured against the released corpus (v0.0.15), that
     difference is visible in exactly **one** step — `herstellung_einer_100_lf-zuordnung…`
