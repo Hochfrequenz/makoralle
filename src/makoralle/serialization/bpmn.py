@@ -140,20 +140,29 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
         action_match = re.match(r"^(?:#\w+)?:(.*);\s*(?:<<(\w+)>>)?$", line)
         if action_match:
             name = action_match.group(1).replace("\\n", " ").strip()
-            item_type, prefix = _ACTION_STEREOTYPES.get(action_match.group(2), ("task", "task"))
-            if action_match.group(2) is not None and action_match.group(2) not in ("save", "procedure"):
-                logger.warning(
-                    "unrecognized action stereotype <<%s>>, treated as a plain task: %r", action_match.group(2), line
-                )
+            stereotype = action_match.group(2)
+            # One source of truth for "which stereotypes are known": editing
+            # _ACTION_STEREOTYPES without also updating a separate membership check
+            # (or vice versa) is exactly the kind of drift that could quietly repeat
+            # this bug — an added stereotype degrading to task without warning, or a
+            # removed one warning about a stereotype that's actually still mapped.
+            if stereotype is not None and stereotype not in _ACTION_STEREOTYPES:
+                logger.warning("unrecognized action stereotype <<%s>>, treated as a plain task: %r", stereotype, line)
+            item_type, prefix = _ACTION_STEREOTYPES.get(stereotype, _ACTION_STEREOTYPES[None])
             flow.append({"type": item_type, "id": next_id(prefix), "name": name, "lane": current_lane})
             continue
 
         # Decision: if (condition?) then (ja). Condition and branch label are each
-        # `[^)]*`, not `.+?`: real source has an empty condition, "if () then (label)" —
-        # `.+?` requires at least one character, so that line matched nothing and the
-        # whole gateway (both branches, the merge, the branch label) silently vanished,
-        # concatenating the branches into one linear path instead.
-        if_match = re.match(r"if\s*\(([^)]*)\)\s*then\s*\(([^)]*)\)", line)
+        # `.*?` (lazy, zero or more), not `.+?` (one or more): real source has both an
+        # empty condition ("if () then (label)" — `.+?` can't match zero characters, so
+        # the whole gateway silently vanished, concatenating the branches into one linear
+        # path) AND a condition containing its own literal ")" ("if (Frist (30 Tage)
+        # abgelaufen?) then (ja)" — `[^)]*`, this fix's first cut, excludes ")" from the
+        # class entirely and so can't match that either, same silent loss for a different
+        # reason). `.*?` is a strict superset of both: it matches zero characters just as
+        # readily, and (being ordinary "any character", not an excluded class) still finds
+        # the correct closing ")" by lazily expanding until "then (" follows.
+        if_match = re.match(r"if\s*\((.*?)\)\s*then\s*\((.*?)\)", line)
         if if_match:
             condition = if_match.group(1).replace("\\n", " ")
             flow.append(
@@ -170,7 +179,7 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
 
         if line.startswith("else"):
             branch = ""
-            else_match = re.match(r"else\s*\(([^)]*)\)", line)
+            else_match = re.match(r"else\s*\((.*?)\)", line)
             if else_match:
                 branch = else_match.group(1)
             flow.append({"type": "branch_else", "branch": branch, "lane": current_lane})
