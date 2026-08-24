@@ -156,7 +156,7 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
         # `.*?` (lazy, zero or more), not `.+?` (one or more): real source has both an
         # empty condition ("if () then (label)" — `.+?` can't match zero characters, so
         # the whole gateway silently vanished, concatenating the branches into one linear
-        # path) AND a condition containing its own literal ")" ("if (Frist (30 Tage)
+        # path) AND a condition containing its own literal ")" ("if (Frist (30 Werktage)
         # abgelaufen?) then (ja)" — `[^)]*`, this fix's first cut, excludes ")" from the
         # class entirely and so can't match that either, same silent loss for a different
         # reason). `.*?` is a strict superset of both: it matches zero characters just as
