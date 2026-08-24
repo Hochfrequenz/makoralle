@@ -452,7 +452,9 @@ def _generate_diagram(  # pylint: disable=too-many-locals,too-many-branches,too-
         # LaneSet — real BPMN tools don't emit one either. This used to emit one anyway
         # (id="laneSet_1_di", bpmnElement="laneSet_1") without the Bounds child every
         # BPMNShape requires, which is what made schema validation fail. Each individual
-        # lane below already gets its own correctly-bounded shape.
+        # lane below already gets its own shape with the required Bounds (not a claim that the
+        # bounds contain that lane's node shapes -- a separate, pre-existing geometry
+        # mismatch, out of scope here).
 
         for lane_name in lanes:
             row = lane_row[lane_name]

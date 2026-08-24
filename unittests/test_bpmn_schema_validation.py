@@ -144,7 +144,9 @@ def test_no_shape_for_the_lane_set_itself() -> None:
     bpmnElement=laneSet_1) used to be emitted without the Bounds child every BPMNShape
     requires, failing schema validation. BPMN DI depicts pools/lanes/flow nodes, not a
     LaneSet, so the fix removes the shape rather than inventing geometry for it — each
-    individual lane below already gets its own correctly-bounded shape."""
+    individual lane below already gets its own shape with the required Bounds (not a claim
+    that the bounds contain that lane's node shapes -- a separate, pre-existing geometry
+    mismatch, out of scope here)."""
     xml = plantuml_to_bpmn(PUML_WITH_LANES, "Test Process")
     doc = etree.fromstring(xml.encode("utf-8"))
     ns = {"bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI", "dc": "http://www.omg.org/spec/DD/20100524/DC"}
