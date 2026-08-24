@@ -1,5 +1,9 @@
+import pytest
 import yaml
 
+from makoralle.models.activity import ActivityDiagram, ADNode
+from makoralle.models.ebd import DecisionStep, DecisionTree
+from makoralle.models.pid import PIDMapping
 from makoralle.models.process import (
     CrossReference,
     NamedSD,
@@ -9,7 +13,14 @@ from makoralle.models.process import (
     SourceDocuments,
     UseCase,
 )
-from makoralle.serialization.process_yaml import process_from_yaml, process_to_yaml
+from makoralle.serialization.process_yaml import (
+    emit_yaml,
+    flatten_process_dict,
+    load_yaml,
+    process_from_dict,
+    process_from_yaml,
+    process_to_yaml,
+)
 
 
 def test_process_to_yaml() -> None:
@@ -107,3 +118,80 @@ def test_process_from_yaml_round_trips() -> None:
     )
     restored = process_from_yaml(process_to_yaml(proc))
     assert restored == proc
+
+
+def test_process_from_dict_minimal() -> None:
+    """No wrappers, no optional fields — the branch where the wrapper ``.pop(..., None)``
+    default matters."""
+    restored = process_from_dict({"id": "x", "name": "X", "source": "s", "category": "c"})
+    assert restored == Process(id="x", name="X", source="s", category="c")
+
+
+def test_process_to_yaml_round_trips_loosely_typed_fields_after_load() -> None:
+    """``decision_trees``/``pid_mappings``/``activity_diagram`` are ``list[Any]``/``dict[str,
+    Any] | None`` on :class:`Process`, so a loaded ``Process`` holds plain dicts there, not
+    model instances (unlike a freshly-constructed one, which is why this test builds ``proc``
+    with dicts directly rather than model instances). Re-emitting such a loaded process used
+    to crash: ``process_to_yaml`` called ``.model_dump()`` unconditionally on each
+    ``decision_trees``/``pid_mappings`` entry."""
+    proc = Process(
+        id="lieferbeginn",
+        name="Lieferbeginn",
+        source="GPKE Teil 2, Kapitel 2.1",
+        category="Zuordnungsprozesse",
+        decision_trees=[
+            DecisionTree(id="E_0003", name="Prüfung", steps=[DecisionStep(nr=1, check="ok?")]).model_dump(
+                exclude_none=True
+            ),
+        ],
+        pid_mappings=[
+            PIDMapping(
+                lfd_nr=1, ahb="GPKE", anwendungsfall="Lieferbeginn", prüfidentifikator=55001
+            ).model_dump(exclude_none=True),
+        ],
+        activity_diagram=ActivityDiagram(
+            participants=["LF"],
+            nodes=[ADNode(id="n1", type="start")],
+            edges=[],
+        ).model_dump(exclude_none=True),
+    )
+    yaml_str = process_to_yaml(proc)  # would previously raise AttributeError on the dicts above
+    restored = process_from_yaml(yaml_str)
+    assert restored == proc
+    assert process_to_yaml(restored) == yaml_str
+
+
+def test_load_yaml_round_trips_through_a_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    proc = Process(id="lieferbeginn", name="Lieferbeginn", source="s", category="c")
+    path = emit_yaml(proc, tmp_path)
+    assert load_yaml(path) == proc
+
+
+def test_process_from_yaml_rejects_empty_input() -> None:
+    with pytest.raises(ValueError, match="mapping"):
+        process_from_yaml("")
+
+
+def test_process_from_yaml_rejects_non_mapping_input() -> None:
+    with pytest.raises(ValueError, match="mapping"):
+        process_from_yaml("- a\n- b\n")
+
+
+def test_process_from_dict_tolerates_bare_wrapper_keys() -> None:
+    """``process:`` or ``cross_references:`` with no value parses as ``None``, not ``{}``."""
+    restored = process_from_dict(
+        {"process": {"id": "x", "name": "X", "source": "s", "category": "c"}, "cross_references": None}
+    )
+    assert restored == Process(id="x", name="X", source="s", category="c")
+
+
+def test_process_from_dict_rejects_unknown_field() -> None:
+    with pytest.raises(ValueError, match="unknown"):
+        process_from_dict(
+            {"process": {"id": "x", "name": "X", "source": "s", "category": "c"}, "use_cases": {}}
+        )
+
+
+def test_flatten_process_dict_wrapper_key_wins_on_collision() -> None:
+    flat = flatten_process_dict({"id": "top-level", "process": {"id": "wrapper"}})
+    assert flat["id"] == "wrapper"
