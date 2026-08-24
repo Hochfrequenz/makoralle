@@ -6,20 +6,25 @@ pydantic model (bpmn.py has none; it builds XML directly).
 Fixtures are hand-authored PlantUML snippets, not real dataset content — this package
 is public, machine-readable_mako-prozesse is private.
 
-Known NOT yet covered here (separate root causes, tracked for a follow-up fix): a lane
-name containing a space produces an invalid xs:ID (``lane_<name>`` isn't sanitized), and
-some fork/parallel-gateway shapes emit a duplicate sequenceFlow/edge id. Every fixture
-below avoids both — PUML_WITH_FORK included, verified against the vendored schema to not
-trigger the duplicate-id case — so this suite exercises exactly what it fixes:
-well-formedness and the (now removed, see PUML_WITH_LANES's test) invalid laneSet shape.
+Also covers several bugs found by validating all 135 real files in the (private)
+machine-readable_mako-prozesse dataset against this same vendored schema: a lane name
+containing a space produced an invalid xs:ID; two lane markers differing only in
+whitespace (``|MSB|`` / ``|MSB |``, or an internal run like ``|weiterer  MSB|``) were
+treated as two distinct lanes, which either collided once sanitized (a document-wide
+duplicate id) or, worse, silently rendered as two separate lanes; two DIFFERENT lane
+names can also sanitize to the same id (e.g. "Lane A" and "Lane_A"), needing their own
+disambiguation; and a fork/decision split with two or more empty branches (nothing
+between the split and the next `fork again`/`else`) emitted a duplicate
+sequenceFlow/edge id.
 """
 
+import re
 from pathlib import Path
 
 import pytest
 from lxml import etree
 
-from makoralle.serialization.bpmn import plantuml_to_bpmn
+from makoralle.serialization.bpmn import _ncname, plantuml_to_bpmn
 
 XSD_DIR = Path(__file__).parent / "fixtures" / "bpmn_xsd"
 
@@ -35,6 +40,20 @@ def _assert_schema_valid(xml: str, schema: etree.XMLSchema) -> None:
         # lxml-stubs types _ErrorLog as an opaque `...` (no __iter__), so str() is what
         # mypy allows; it happens to also be lxml's own multi-line rendering of the log.
         pytest.fail(str(schema.error_log))
+    _assert_all_ids_unique(doc)
+
+
+def _assert_all_ids_unique(doc: etree._Element) -> None:
+    """xs:ID is unique document-wide; the schema itself enforces this (a duplicate is a
+    validation error), but asserting it directly, on every fixture, is what actually
+    caught bug 1 (duplicate sequenceFlow ids) here rather than via an opaque schema
+    error — and it would just as well catch a future lane-id collision (see the
+    disambiguating allocator in plantuml_to_bpmn) on any fixture, not just the ones
+    written specifically to exercise it."""
+    matches = doc.xpath("//@id")
+    assert isinstance(matches, list)  # this expression always yields a node-set, never a bool/float/str
+    ids = [str(i) for i in matches]
+    assert len(ids) == len(set(ids)), f"duplicate id(s): {sorted({i for i in ids if ids.count(i) > 1})}"
 
 
 PUML_NO_LANES = """
@@ -103,6 +122,61 @@ PUML_EMPTY = """
 @enduml
 """
 
+PUML_WITH_LANE_NAME_SPACE = """
+@startuml
+|weiterer MSB|
+start
+:Etwas tun;
+stop
+@enduml
+"""
+
+PUML_WITH_INCONSISTENT_LANE_WHITESPACE = """
+@startuml
+|MSB|
+start
+:Erste Aufgabe;
+|MSB |
+:Zweite Aufgabe;
+stop
+@enduml
+"""
+
+PUML_WITH_TWO_EMPTY_FORK_BRANCHES = """
+@startuml
+|NB|
+start
+fork
+fork again
+fork again
+:Aufgabe C;
+end fork
+stop
+@enduml
+"""
+
+PUML_WITH_COLLIDING_LANE_NAMES = """
+@startuml
+|Lane A|
+start
+:Erste Aufgabe;
+|Lane_A|
+:Zweite Aufgabe;
+stop
+@enduml
+"""
+
+PUML_WITH_INTERNAL_LANE_WHITESPACE = """
+@startuml
+|weiterer MSB|
+start
+:Erste Aufgabe;
+|weiterer  MSB|
+:Zweite Aufgabe;
+stop
+@enduml
+"""
+
 
 @pytest.mark.parametrize(
     "puml",
@@ -113,6 +187,11 @@ PUML_EMPTY = """
         pytest.param(PUML_WITH_SUBPROCESS, id="with_subprocess_ref"),
         pytest.param(PUML_WITH_FORK, id="with_fork_join"),
         pytest.param(PUML_EMPTY, id="empty_diagram"),
+        pytest.param(PUML_WITH_LANE_NAME_SPACE, id="lane_name_with_space"),
+        pytest.param(PUML_WITH_INCONSISTENT_LANE_WHITESPACE, id="inconsistent_lane_whitespace"),
+        pytest.param(PUML_WITH_TWO_EMPTY_FORK_BRANCHES, id="two_empty_fork_branches"),
+        pytest.param(PUML_WITH_COLLIDING_LANE_NAMES, id="colliding_lane_names"),
+        pytest.param(PUML_WITH_INTERNAL_LANE_WHITESPACE, id="internal_lane_whitespace"),
     ],
 )
 def test_plantuml_to_bpmn_is_well_formed_and_schema_valid(puml: str, bpmn_schema: etree.XMLSchema) -> None:
@@ -155,3 +234,133 @@ def test_no_shape_for_the_lane_set_itself() -> None:
     assert len(lane_shapes) == 2  # LF, NB
     for shape in lane_shapes:
         assert shape.find("dc:Bounds", ns) is not None
+
+
+MODEL_NS = {"m": "http://www.omg.org/spec/BPMN/20100524/MODEL"}
+
+
+def test_lane_name_with_a_space_gets_a_valid_ncname_id() -> None:
+    """Regression test: lane ids were built as f"lane_{lane_name}" with the PlantUML
+    source text used verbatim — a real dataset lane name like "weiterer MSB" produced
+    the id "lane_weiterer MSB", not a legal xs:ID (NCName forbids whitespace)."""
+    xml = plantuml_to_bpmn(PUML_WITH_LANE_NAME_SPACE, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    lane = doc.find(".//m:lane", MODEL_NS)
+    assert lane is not None
+    assert lane.get("id") == "lane_weiterer_MSB"
+    assert lane.get("name") == "weiterer MSB"  # the human-readable name is untouched
+
+
+def test_inconsistent_lane_whitespace_is_one_lane_not_two() -> None:
+    """Regression test: real dataset source has both "|MSB|" and "|MSB |" (trailing
+    space) for what's clearly meant to be one actor. Before normalizing, that produced
+    two distinct <lane> elements whose ids then collided once whitespace was correctly
+    stripped when sanitizing each into an NCName — a real dataset file
+    (reklamation_von_werten_beim_msb) failed schema validation on exactly this."""
+    xml = plantuml_to_bpmn(PUML_WITH_INCONSISTENT_LANE_WHITESPACE, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    lanes = doc.findall(".//m:lane", MODEL_NS)
+    assert len(lanes) == 1
+    assert lanes[0].get("name") == "MSB"
+    # start, both tasks (one per swimlane marker), and stop all belong to the single lane
+    assert len(lanes[0].findall("m:flowNodeRef", MODEL_NS)) == 4
+
+
+def test_internal_lane_whitespace_is_one_lane_not_two() -> None:
+    """Same bug as the leading/trailing-whitespace case above, but for a run of
+    whitespace INSIDE the name ("weiterer MSB" vs "weiterer  MSB") — .strip() alone
+    would not catch this; the fix normalizes the whole name via " ".join(...split())."""
+    xml = plantuml_to_bpmn(PUML_WITH_INTERNAL_LANE_WHITESPACE, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    lanes = doc.findall(".//m:lane", MODEL_NS)
+    assert len(lanes) == 1
+    assert lanes[0].get("name") == "weiterer MSB"
+
+
+def test_colliding_lane_names_get_distinct_ids() -> None:
+    """Regression test: two DIFFERENT lane names can sanitize to the same id ("Lane A"
+    and "Lane_A" both -> "lane_Lane_A") — a document-wide duplicate xs:ID, which
+    invalidates the whole file, not just the lane. The allocator in plantuml_to_bpmn
+    disambiguates with a numeric suffix."""
+    xml = plantuml_to_bpmn(PUML_WITH_COLLIDING_LANE_NAMES, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    lanes = doc.findall(".//m:lane", MODEL_NS)
+    assert len(lanes) == 2
+    ids = [lane.get("id") for lane in lanes]
+    assert len(ids) == len(set(ids)), f"duplicate lane id(s): {ids}"
+    names = {lane.get("name") for lane in lanes}
+    assert names == {"Lane A", "Lane_A"}
+
+
+def test_two_empty_fork_branches_do_not_duplicate_the_merge_sequence_flow() -> None:
+    """Regression test: a fork branch with no content before the next `fork again`
+    never advances past the split gateway's own id, so two such empty branches both
+    record that same id as "where this branch ends" — emitting one sequenceFlow per
+    recorded end then wrote the same (id, sourceRef, targetRef) twice. A real dataset
+    file (beginn_der_ersatz-_grundversorgung) had this exact duplicate.
+
+    Asserts more than "no duplicate ids": a fix that just dropped every entry but the
+    first would also produce unique ids while silently deleting the real Aufgabe-C
+    branch's edge. Pin exactly which two edges reach the merge gateway — the split's own
+    id once (both empty branches collapsed to the one real edge) and the non-empty
+    branch's task once."""
+    xml = plantuml_to_bpmn(PUML_WITH_TWO_EMPTY_FORK_BRANCHES, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    flow_ids = [sf.get("id") for sf in doc.findall(".//m:sequenceFlow", MODEL_NS)]
+    assert len(flow_ids) == len(set(flow_ids)), f"duplicate sequenceFlow id(s) in: {flow_ids}"
+
+    merge = doc.find(".//m:parallelGateway[@gatewayDirection='Converging']", MODEL_NS)
+    split = doc.find(".//m:parallelGateway[@gatewayDirection='Diverging']", MODEL_NS)
+    task = doc.find(".//m:task", MODEL_NS)
+    assert merge is not None
+    assert split is not None
+    assert task is not None
+    merge_id = merge.get("id", "")
+    sources = sorted(
+        sf.get("sourceRef", "") for sf in doc.findall(".//m:sequenceFlow", MODEL_NS) if sf.get("targetRef") == merge_id
+    )
+    assert sources == sorted([split.get("id", ""), task.get("id", "")])
+
+
+_NCNAME_START_RE = re.compile(r"^[A-Za-z_][\w.\-]*$")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("MSB", "MSB"),
+        ("MSB ", "MSB"),
+        ("weiterer MSB", "weiterer_MSB"),
+        ("München", "München"),  # Unicode letters pass through unchanged, stay readable
+        ("Prüfung/Änderung", "Prüfung_Änderung"),
+        ("9 Partei", "_9_Partei"),  # leading digit AFTER sanitizing, not just raw[0]
+        ("0abc", "_0abc"),
+        (".x", "_.x"),
+        ("-x", "_-x"),
+        ("", "_"),
+        ("   ", "_"),
+        ("!!!", "___"),
+    ],
+)
+def test_ncname_exact_output(raw: str, expected: str) -> None:
+    assert _ncname(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "1st lane",  # leading digit after sanitizing — found in round-1 review (Copilot)
+        "9",
+        "weiterer MSB",
+        "  MSB  ",
+        "!!!",
+        "",
+        "   ",
+        "München",
+    ],
+)
+def test_ncname_always_produces_a_valid_ncname(raw: str) -> None:
+    """Property check alongside the exact-value table above: whatever the input, the
+    result must start with a legal NCName start character."""
+    result = _ncname(raw)
+    assert _NCNAME_START_RE.match(result), f"{result!r} (from {raw!r}) is not a valid NCName"
