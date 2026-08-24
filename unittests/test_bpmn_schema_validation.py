@@ -18,6 +18,7 @@ between the split and the next `fork again`/`else`) emitted a duplicate
 sequenceFlow/edge id.
 """
 
+import logging
 import re
 from pathlib import Path
 
@@ -99,6 +100,56 @@ PUML_WITH_SUBPROCESS = """
 start
 #FFFACD:Unterprozess XY|
 :Weiterverarbeitung;
+stop
+@enduml
+"""
+
+PUML_WITH_STEREOTYPES = """
+@startuml
+|MSB|
+start
+:Normale Aufgabe;
+:Nachricht an Marktpartner;<<save>>
+|NB|
+:Aufruf eines Unterprozesses;<<procedure>>
+stop
+@enduml
+"""
+
+PUML_WITH_UNKNOWN_STEREOTYPE = """
+@startuml
+|MSB|
+start
+:Etwas Neues;<<future>>
+stop
+@enduml
+"""
+
+PUML_WITH_SPLIT = """
+@startuml
+|LF|
+start
+split
+:Zweig A;
+split again
+:Zweig B;
+end split
+:Zusammenführung;
+stop
+@enduml
+"""
+
+PUML_WITH_EMPTY_IF_CONDITION = """
+@startuml
+|LF|
+start
+:Prüfung durchführen;
+if () then (ja)
+  :Bestaetigung senden;
+else ()
+  :Ablehnung senden;
+endif
+:Abschluss;
 stop
 @enduml
 """
@@ -185,6 +236,10 @@ stop
         pytest.param(PUML_WITH_LANES, id="with_lanes"),
         pytest.param(PUML_WITH_DECISION, id="with_decision_gateway"),
         pytest.param(PUML_WITH_SUBPROCESS, id="with_subprocess_ref"),
+        pytest.param(PUML_WITH_STEREOTYPES, id="with_save_and_procedure_stereotypes"),
+        pytest.param(PUML_WITH_UNKNOWN_STEREOTYPE, id="with_unknown_stereotype"),
+        pytest.param(PUML_WITH_SPLIT, id="with_split_join"),
+        pytest.param(PUML_WITH_EMPTY_IF_CONDITION, id="with_empty_if_condition"),
         pytest.param(PUML_WITH_FORK, id="with_fork_join"),
         pytest.param(PUML_EMPTY, id="empty_diagram"),
         pytest.param(PUML_WITH_LANE_NAME_SPACE, id="lane_name_with_space"),
@@ -197,6 +252,84 @@ stop
 def test_plantuml_to_bpmn_is_well_formed_and_schema_valid(puml: str, bpmn_schema: etree.XMLSchema) -> None:
     xml = plantuml_to_bpmn(puml, "Test Process")
     _assert_schema_valid(xml, bpmn_schema)  # fromstring above already proves well-formedness
+
+
+def test_save_and_procedure_stereotypes_are_not_silently_dropped() -> None:
+    """Regression test: real dataset source marks some actions with a PlantUML
+    stereotype instead of the older dedicated syntaxes this parser otherwise
+    recognizes — ":text;<<save>>" (a message crossing a swimlane, per this dataset's
+    own GENERATED_WITH.json provenance notes) and ":text;<<procedure>>" (a subprocess
+    call, in a second lane here — the fixture spans two lanes so lane membership for a
+    stereotyped action is also pinned, not just its element type). A line ending in
+    ">>" matched neither the ":text/" (send) nor the ":text;" (task) rule, so before
+    this fix the entire line — and the activity it names — was silently dropped: found
+    by comparing element counts before/after regenerating a real dataset's output/bpmn/
+    with this fix, not by inspecting the parser code.
+
+    Asserts connectivity, not just that the right element types exist: the original bug
+    also meant "no connecting sequenceFlow" — a fix that emitted the right element but
+    left it unlinked would still pass a name/type-only check."""
+    xml = plantuml_to_bpmn(PUML_WITH_STEREOTYPES, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    tasks = {t.get("name"): t.get("id") for t in doc.findall(".//m:task", MODEL_NS)}
+    sends = {t.get("name"): t.get("id") for t in doc.findall(".//m:sendTask", MODEL_NS)}
+    calls = {t.get("name"): t.get("id") for t in doc.findall(".//m:callActivity", MODEL_NS)}
+    assert set(tasks) == {"Normale Aufgabe"}
+    assert set(sends) == {"Nachricht an Marktpartner"}
+    assert set(calls) == {"Aufruf eines Unterprozesses"}
+
+    flows = {(sf.get("sourceRef"), sf.get("targetRef")) for sf in doc.findall(".//m:sequenceFlow", MODEL_NS)}
+    task_id = tasks["Normale Aufgabe"]
+    send_id = sends["Nachricht an Marktpartner"]
+    call_id = calls["Aufruf eines Unterprozesses"]
+    assert (task_id, send_id) in flows
+    assert (send_id, call_id) in flows
+
+    # the sendTask (first lane) and callActivity (second lane) each belong to their own lane
+    lanes = {}
+    for lane in doc.findall(".//m:lane", MODEL_NS):
+        lanes[lane.get("name")] = {ref.text for ref in lane.findall("m:flowNodeRef", MODEL_NS)}
+    assert send_id in lanes["MSB"]
+    assert call_id in lanes["NB"]
+
+
+def test_unknown_action_stereotype_degrades_to_a_plain_task(caplog: pytest.LogCaptureFixture) -> None:
+    """A stereotype other than <<save>>/<<procedure>> is not (yet) modeled — but per the
+    lesson of the bug above, an unrecognized construct must never disappear silently.
+    It degrades to a plain task (a lost distinction, not a lost node) and is logged."""
+    with caplog.at_level(logging.WARNING):
+        xml = plantuml_to_bpmn(PUML_WITH_UNKNOWN_STEREOTYPE, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    tasks = {t.get("name") for t in doc.findall(".//m:task", MODEL_NS)}
+    assert tasks == {"Etwas Neues"}
+    assert "future" in caplog.text
+
+
+def test_split_join_is_not_silently_flattened() -> None:
+    """Regression test: PlantUML's "split"/"split again"/"end split" is the same
+    parallel-branch construct as "fork"/"fork again"/"end fork" under a different
+    keyword. Real source uses both, but only "fork" was recognized — "split" matched no
+    rule, so the branches were silently flattened into one linear path with no
+    parallelGateway at all (found in the same real-corpus audit as the stereotype bug,
+    54 lines across 9 of 87 real files)."""
+    xml = plantuml_to_bpmn(PUML_WITH_SPLIT, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    assert len(doc.findall(".//m:parallelGateway", MODEL_NS)) == 2  # split + merge
+    tasks = {t.get("name") for t in doc.findall(".//m:task", MODEL_NS)}
+    assert tasks == {"Zweig A", "Zweig B", "Zusammenführung"}
+
+
+def test_empty_if_condition_still_creates_a_gateway() -> None:
+    """Regression test: real source has "if () then (label)" — an empty condition.
+    `.+?` (at least one character) matched nothing, so the ENTIRE decision — both
+    branches, the merge, the branch labels — silently vanished, concatenating the
+    branches into one linear path (found in the same audit, 39 occurrences across 15 of
+    87 real files). Fixed with `[^)]*` (zero or more)."""
+    xml = plantuml_to_bpmn(PUML_WITH_EMPTY_IF_CONDITION, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    assert len(doc.findall(".//m:exclusiveGateway", MODEL_NS)) == 2  # split + merge
+    tasks = {t.get("name") for t in doc.findall(".//m:task", MODEL_NS)}
+    assert tasks == {"Prüfung durchführen", "Bestaetigung senden", "Ablehnung senden", "Abschluss"}
 
 
 def _definitions_open_tag(xml: str) -> str:

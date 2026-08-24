@@ -4,9 +4,10 @@ Handles:
 - Swimlanes → BPMN Lanes within a single Pool
 - Actions (;) → BPMN Tasks
 - Signals (/) → BPMN SendTasks
+- Stereotyped actions (:text;<<save>> / :text;<<procedure>>) → BPMN SendTask / CallActivity
 - Subprocess refs (#FFFACD ... |) → BPMN CallActivity
 - Decisions (if/else/endif) → BPMN ExclusiveGateway
-- Fork/join (fork/end fork) → BPMN ParallelGateway
+- Fork/join (fork/fork again/end fork, split/split again/end split) → BPMN ParallelGateway
 - Start/stop → BPMN StartEvent/EndEvent
 """
 
@@ -33,6 +34,15 @@ for _prefix, _uri in _NS.items():
     register_namespace(_prefix, _uri)
 
 _NCNAME_INVALID = re.compile(r"[^\w.\-]")
+
+# PlantUML action stereotype -> (flow item type, id prefix). None is the un-stereotyped
+# ("plain task") case; any stereotype not listed here also falls back to it (see
+# _parse_plantuml_to_flow) rather than being silently dropped.
+_ACTION_STEREOTYPES: dict[str | None, tuple[str, str]] = {
+    None: ("task", "task"),
+    "save": ("send", "send"),  # "a message crossing a swimlane" (GENERATED_WITH.json)
+    "procedure": ("subprocess", "sub"),  # "subprocess calls" (GENERATED_WITH.json)
+}
 
 
 def _ncname(raw: str) -> str:
@@ -69,7 +79,14 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
         line = lines[i].strip()
         i += 1
 
-        if not line or line.startswith("'") or line.startswith("skinparam") or line.startswith("!"):
+        if (
+            not line
+            or line.startswith("'")
+            or line.startswith("skinparam")
+            or line.startswith("!")
+            or line in ("@startuml", "@enduml")
+            or line.startswith("title ")
+        ):
             continue
 
         # Swimlane: |LF|
@@ -103,18 +120,49 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
 
         # Signal (message send): :text/
         if line.startswith(":") and line.endswith("/"):
-            name = line[1:-1].replace("\\n", " ")
+            name = line[1:-1].replace("\\n", " ").strip()
             flow.append({"type": "send", "id": next_id("send"), "name": name, "lane": current_lane})
             continue
 
-        # Action: :text;
-        if line.startswith(":") and line.endswith(";"):
-            name = line[1:-1].replace("\\n", " ")
-            flow.append({"type": "task", "id": next_id("task"), "name": name, "lane": current_lane})
+        # Action, optionally stereotyped: ":text;", ":text;<<save>>", ":text;<<procedure>>"
+        # (optionally colour-prefixed, "#AABBCC:text;..."). The stereotype forms are a
+        # newer PlantUML convention (real source, introduced when makorele v0.0.13
+        # restyled the activity diagrams by stereotype) marking an action with a UML
+        # stereotype instead of the older dedicated syntaxes this parser otherwise
+        # recognizes (#FFFACD:Name| for subprocess, :text/ for send, both above/below).
+        # A line ending in ">>" matched neither of those, nor the plain ":text;" rule
+        # below (both check only the last character) — so before this branch existed,
+        # every stereotyped action fell through every rule and was dropped entirely: no
+        # node, no id, no lane membership, no connecting sequenceFlow. Any OTHER
+        # stereotype degrades to a plain task (a lost distinction, not a lost node) and
+        # is logged, rather than repeating that failure for the next stereotype PlantUML
+        # introduces — see the catch-all warning at the end of this loop.
+        action_match = re.match(r"^(?:#\w+)?:(.*);\s*(?:<<(\w+)>>)?$", line)
+        if action_match:
+            name = action_match.group(1).replace("\\n", " ").strip()
+            stereotype = action_match.group(2)
+            # One source of truth for "which stereotypes are known": editing
+            # _ACTION_STEREOTYPES without also updating a separate membership check
+            # (or vice versa) is exactly the kind of drift that could quietly repeat
+            # this bug — an added stereotype degrading to task without warning, or a
+            # removed one warning about a stereotype that's actually still mapped.
+            if stereotype is not None and stereotype not in _ACTION_STEREOTYPES:
+                logger.warning("unrecognized action stereotype <<%s>>, treated as a plain task: %r", stereotype, line)
+            item_type, prefix = _ACTION_STEREOTYPES.get(stereotype, _ACTION_STEREOTYPES[None])
+            flow.append({"type": item_type, "id": next_id(prefix), "name": name, "lane": current_lane})
             continue
 
-        # Decision: if (condition?) then (ja)
-        if_match = re.match(r"if\s*\((.+?)\)\s*then\s*\((.+?)\)", line)
+        # Decision: if (condition?) then (ja). Condition and branch label are each
+        # `.*?` (lazy, zero or more), not `.+?` (one or more): real source has both an
+        # empty condition ("if () then (label)" — `.+?` can't match zero characters, so
+        # the whole gateway silently vanished, concatenating the branches into one linear
+        # path) AND a condition containing its own literal ")" ("if (Frist (30 Werktage)
+        # abgelaufen?) then (ja)" — `[^)]*`, this fix's first cut, excludes ")" from the
+        # class entirely and so can't match that either, same silent loss for a different
+        # reason). `.*?` is a strict superset of both: it matches zero characters just as
+        # readily, and (being ordinary "any character", not an excluded class) still finds
+        # the correct closing ")" by lazily expanding until "then (" follows.
+        if_match = re.match(r"if\s*\((.*?)\)\s*then\s*\((.*?)\)", line)
         if if_match:
             condition = if_match.group(1).replace("\\n", " ")
             flow.append(
@@ -131,7 +179,7 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
 
         if line.startswith("else"):
             branch = ""
-            else_match = re.match(r"else\s*\((.+?)\)", line)
+            else_match = re.match(r"else\s*\((.*?)\)", line)
             if else_match:
                 branch = else_match.group(1)
             flow.append({"type": "branch_else", "branch": branch, "lane": current_lane})
@@ -143,8 +191,13 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
             )
             continue
 
-        # Fork: fork / fork again / end fork
-        if line == "fork":
+        # Fork: fork / fork again / end fork — and PlantUML's "split" family, which is
+        # the same parallel-branch construct under a different keyword. Real source uses
+        # both; "split"/"split again"/"end split" matched no rule at all before this fix,
+        # so those branches were silently flattened into one linear path with no
+        # parallelGateway — not a missing node like the stereotype bug, but a wrong
+        # topology (54 lines across 9 of 87 real files).
+        if line in ("fork", "split"):
             flow.append(
                 {
                     "type": "gateway_split",
@@ -157,11 +210,11 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
             flow.append({"type": "branch_start", "branch": "fork_1", "lane": current_lane})
             continue
 
-        if line == "fork again":
+        if line in ("fork again", "split again"):
             flow.append({"type": "branch_else", "branch": "fork_next", "lane": current_lane})
             continue
 
-        if line == "end fork":
+        if line in ("end fork", "end split"):
             flow.append(
                 {"type": "gateway_merge", "id": next_id("par_merge"), "lane": current_lane, "gateway_type": "parallel"}
             )
@@ -170,6 +223,15 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
         # Note (skip)
         if line.startswith("note ") or line == "end note":
             continue
+
+        # Nothing matched: never drop a line silently. This is the failure mode both the
+        # stereotype and split/if-empty-condition bugs shared — an unrecognized construct
+        # (an activity, a whole gateway, a whole parallel branch) vanishing with no
+        # signal, only findable by diffing element counts against a previously-committed
+        # corpus. A real PlantUML construct this parser doesn't yet model (e.g. `repeat`
+        # loops, styled arrows) still won't be represented, but it will be visible in the
+        # logs rather than silently absent from the output.
+        logger.warning("unrecognized PlantUML activity-diagram line, dropped: %r", line)
 
     return flow
 
