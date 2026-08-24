@@ -82,7 +82,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "unittests/**" = ["PLR2004"]
 "src/makoralle/__init__.py" = ["PLC0415"]
-"src/makoralle/serialization/bpmn.py" = ["PLC0415"]
 "src/makoralle/models/pid.py" = ["PLC2401"] # German domain field names carry ü/ä by design
 
 [mypy]

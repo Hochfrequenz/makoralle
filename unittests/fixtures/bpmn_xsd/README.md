@@ -1,7 +1,9 @@
 # BPMN 2.0 XSD (vendored)
 
-Unmodified copies of the official OMG BPMN 2.0 XML schema, fetched from
-<https://www.omg.org/spec/BPMN/20100501/>:
+Copies of the official OMG BPMN 2.0 XML schema, fetched from
+<https://www.omg.org/spec/BPMN/20100501/> and otherwise unmodified — except `DI.xsd`,
+which shipped with a UTF-8 BOM the repo's "Prevent ByteOrderMarks" check rejects; that
+BOM was stripped, no other byte changed:
 
 - `BPMN20.xsd` — root schema, imports the other four
 - `Semantic.xsd` — the BPMN element definitions

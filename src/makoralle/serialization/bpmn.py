@@ -20,6 +20,18 @@ from xml.etree.ElementTree import Element, ElementTree, SubElement, indent, regi
 
 logger = logging.getLogger(__name__)
 
+# BPMN 2.0 + Diagram Interchange namespaces. Registered once at import time (rather than
+# on every plantuml_to_bpmn call) since ElementTree.register_namespace mutates a
+# process-global prefix map — repeating it per call was a pointless side effect.
+_NS = {
+    "": "http://www.omg.org/spec/BPMN/20100524/MODEL",
+    "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
+    "dc": "http://www.omg.org/spec/DD/20100524/DC",
+    "di": "http://www.omg.org/spec/DD/20100524/DI",
+}
+for _prefix, _uri in _NS.items():
+    register_namespace(_prefix, _uri)
+
 
 def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disable=too-many-branches,too-many-statements
     """Parse PlantUML activity diagram into a flat flow list."""
@@ -148,16 +160,6 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
     if not lanes:
         lanes = ["Default"]
 
-    # BPMN namespaces
-    ns = {
-        "": "http://www.omg.org/spec/BPMN/20100524/MODEL",
-        "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
-        "dc": "http://www.omg.org/spec/DD/20100524/DC",
-        "di": "http://www.omg.org/spec/DD/20100524/DI",
-    }
-    for prefix, uri in ns.items():
-        register_namespace(prefix, uri)
-
     # Only the default (unprefixed) namespace needs declaring by hand: every plain tag
     # below ("process", "task", "lane", ...) is unqualified, so ElementTree has no other
     # way to bind it to the MODEL namespace. bpmndi/dc/di must NOT also be declared here —
@@ -170,7 +172,7 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
     definitions = Element(
         "definitions",
         {
-            "xmlns": ns[""],
+            "xmlns": _NS[""],
             "id": "definitions",
             "targetNamespace": "http://mako.energyerp.de",
         },
@@ -445,23 +447,12 @@ def _generate_diagram(  # pylint: disable=too-many-locals,too-many-branches,too-
         max_col = max(col.values()) if col else 0
         total_w = LANE_HEADER + LANE_PAD * 2 + (max_col + 1) * (TASK_W + H_GAP)
         lane_height_each = TASK_H + V_GAP * 2 + LANE_PAD * 2
-        total_h = len(lanes) * lane_height_each + (len(lanes) - 1) * V_GAP
 
-        lane_set_shape = SubElement(
-            plane,
-            f"{{{ns_bpmndi}}}BPMNShape",
-            {
-                "id": "laneSet_1_di",
-                "bpmnElement": "laneSet_1",
-                "isHorizontal": "true",
-            },
-        )
-        # Every BPMNShape requires a Bounds child (BPMN 2.0 XSD); this one was missing.
-        SubElement(
-            lane_set_shape,
-            f"{{{ns_dc}}}Bounds",
-            {"x": "0", "y": "0", "width": str(total_w), "height": str(total_h)},
-        )
+        # No shape for the laneSet itself: BPMN DI depicts pools/lanes/flow nodes, not a
+        # LaneSet — real BPMN tools don't emit one either. This used to emit one anyway
+        # (id="laneSet_1_di", bpmnElement="laneSet_1") without the Bounds child every
+        # BPMNShape requires, which is what made schema validation fail. Each individual
+        # lane below already gets its own correctly-bounded shape.
 
         for lane_name in lanes:
             row = lane_row[lane_name]
