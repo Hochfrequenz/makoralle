@@ -103,6 +103,17 @@ stop
 @enduml
 """
 
+PUML_WITH_STEREOTYPES = """
+@startuml
+|MSB|
+start
+:Normale Aufgabe;
+:Nachricht an Marktpartner;<<save>>
+:Aufruf eines Unterprozesses;<<procedure>>
+stop
+@enduml
+"""
+
 PUML_WITH_FORK = """
 @startuml
 |LF|
@@ -185,6 +196,7 @@ stop
         pytest.param(PUML_WITH_LANES, id="with_lanes"),
         pytest.param(PUML_WITH_DECISION, id="with_decision_gateway"),
         pytest.param(PUML_WITH_SUBPROCESS, id="with_subprocess_ref"),
+        pytest.param(PUML_WITH_STEREOTYPES, id="with_save_and_procedure_stereotypes"),
         pytest.param(PUML_WITH_FORK, id="with_fork_join"),
         pytest.param(PUML_EMPTY, id="empty_diagram"),
         pytest.param(PUML_WITH_LANE_NAME_SPACE, id="lane_name_with_space"),
@@ -197,6 +209,25 @@ stop
 def test_plantuml_to_bpmn_is_well_formed_and_schema_valid(puml: str, bpmn_schema: etree.XMLSchema) -> None:
     xml = plantuml_to_bpmn(puml, "Test Process")
     _assert_schema_valid(xml, bpmn_schema)  # fromstring above already proves well-formedness
+
+
+def test_save_and_procedure_stereotypes_are_not_silently_dropped() -> None:
+    """Regression test: real dataset source marks some actions with a PlantUML
+    stereotype instead of the older dedicated syntaxes this parser otherwise
+    recognizes — ":text;<<save>>" (a message crossing a swimlane, per this dataset's
+    own GENERATED_WITH.json provenance notes) and ":text;<<procedure>>" (a subprocess
+    call). A line ending in ">>" matched neither the ":text/" (send) nor the ":text;"
+    (task) rule, so before this fix the entire line — and the activity it names — was
+    silently dropped: found by comparing element counts before/after regenerating a
+    real dataset's output/bpmn/ with this fix, not by inspecting the parser code."""
+    xml = plantuml_to_bpmn(PUML_WITH_STEREOTYPES, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    tasks = {t.get("name") for t in doc.findall(".//m:task", MODEL_NS)}
+    sends = {t.get("name") for t in doc.findall(".//m:sendTask", MODEL_NS)}
+    calls = {t.get("name") for t in doc.findall(".//m:callActivity", MODEL_NS)}
+    assert tasks == {"Normale Aufgabe"}
+    assert sends == {"Nachricht an Marktpartner"}
+    assert calls == {"Aufruf eines Unterprozesses"}
 
 
 def _definitions_open_tag(xml: str) -> str:

@@ -101,6 +101,23 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
             flow.append({"type": "subprocess", "id": next_id("sub"), "name": name, "lane": current_lane})
             continue
 
+        # Stereotyped action: :text;<<save>> or :text;<<procedure>> — a newer PlantUML
+        # convention (real source, post makorele's v0.0.13 activity-diagram re-parse) that
+        # marks an action with a UML stereotype instead of the older dedicated syntaxes
+        # this parser otherwise recognizes (#FFFACD:Name| for subprocess, :text/ for
+        # send). Checked before the plain ":text;" action rule below so a stereotyped line
+        # doesn't fall through as an ordinary task and lose its <<save>>/<<procedure>>
+        # meaning — or, before this fix existed, get silently dropped entirely, since a
+        # line ending in ">>" matched neither that rule nor the ":text/" one.
+        stereotype_match = re.match(r"^:(.*);<<(save|procedure)>>$", line)
+        if stereotype_match:
+            name = stereotype_match.group(1).replace("\\n", " ")
+            stereotype = stereotype_match.group(2)
+            item_type = "subprocess" if stereotype == "procedure" else "send"
+            prefix = "sub" if stereotype == "procedure" else "send"
+            flow.append({"type": item_type, "id": next_id(prefix), "name": name, "lane": current_lane})
+            continue
+
         # Signal (message send): :text/
         if line.startswith(":") and line.endswith("/"):
             name = line[1:-1].replace("\\n", " ")
