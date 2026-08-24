@@ -14,12 +14,13 @@ collided once their (correctly sanitized) ids matched; and some fork/parallel-ga
 shapes with an empty branch emitted a duplicate sequenceFlow/edge id.
 """
 
+import re
 from pathlib import Path
 
 import pytest
 from lxml import etree
 
-from makoralle.serialization.bpmn import plantuml_to_bpmn
+from makoralle.serialization.bpmn import _ncname, plantuml_to_bpmn
 
 XSD_DIR = Path(__file__).parent / "fixtures" / "bpmn_xsd"
 
@@ -233,3 +234,29 @@ def test_two_empty_fork_branches_do_not_duplicate_the_merge_sequence_flow() -> N
     doc = etree.fromstring(xml.encode("utf-8"))
     flow_ids = [sf.get("id") for sf in doc.findall(".//m:sequenceFlow", MODEL_NS)]
     assert len(flow_ids) == len(set(flow_ids)), f"duplicate sequenceFlow id(s) in: {flow_ids}"
+
+
+_NCNAME_START_RE = re.compile(r"^[A-Za-z_][\w.\-]*$", re.UNICODE)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "1st lane",  # leading digit after sanitizing — found in round-1 review (Copilot)
+        "9",
+        "weiterer MSB",
+        "  MSB  ",
+        "!!!",
+        "",
+        "   ",
+        "München",
+    ],
+)
+def test_ncname_always_produces_a_valid_ncname(raw: str) -> None:
+    result = _ncname(raw)
+    assert _NCNAME_START_RE.match(result), f"{result!r} (from {raw!r}) is not a valid NCName"
+
+
+def test_ncname_keeps_unicode_letters_readable() -> None:
+    assert _ncname("München") == "München"
+    assert _ncname("weiterer MSB") == "weiterer_MSB"

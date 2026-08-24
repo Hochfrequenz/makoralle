@@ -44,7 +44,7 @@ def _ncname(raw: str) -> str:
     is replaced — so ids stay human-readable.
     """
     sanitized = _NCNAME_INVALID.sub("_", raw.strip()) or "_"
-    return f"_{sanitized}" if sanitized[0] in "0.-" else sanitized
+    return f"_{sanitized}" if sanitized[0].isdigit() or sanitized[0] in ".-" else sanitized
 
 
 def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disable=too-many-branches,too-many-statements
