@@ -21,6 +21,10 @@ stay importable. The heavy module loads only when its symbol is first accessed.
 _API = {
     "process_to_yaml": "makoralle.serialization.process_yaml",
     "emit_yaml": "makoralle.serialization.process_yaml",
+    "flatten_process_dict": "makoralle.serialization.process_yaml",
+    "process_from_dict": "makoralle.serialization.process_yaml",
+    "process_from_yaml": "makoralle.serialization.process_yaml",
+    "load_yaml": "makoralle.serialization.process_yaml",
     "emit_wsd": "makoralle.serialization.wsd",
     "emit_all_wsd": "makoralle.serialization.wsd",
     "emit_markdown": "makoralle.serialization.markdown",
