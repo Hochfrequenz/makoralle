@@ -32,7 +32,7 @@ _NS = {
 for _prefix, _uri in _NS.items():
     register_namespace(_prefix, _uri)
 
-_NCNAME_INVALID = re.compile(r"[^\w.\-]", re.UNICODE)
+_NCNAME_INVALID = re.compile(r"[^\w.\-]")
 
 
 def _ncname(raw: str) -> str:
@@ -40,8 +40,14 @@ def _ncname(raw: str) -> str:
     NCNames, which forbid whitespace and most punctuation and can't start with a digit,
     ``.`` or ``-``. Swimlane names come from PlantUML source text verbatim (e.g. "weiterer
     MSB") and were used unsanitized, so a lane name with a space produced an invalid id.
-    ``\\w`` (Unicode-aware) keeps letters like ü/ä unchanged — only whitespace/punctuation
-    is replaced — so ids stay human-readable.
+    ``\\w`` keeps letters like ü/ä unchanged — only whitespace/most punctuation is replaced
+    — so ids stay human-readable; it does let through a few characters (e.g. Unicode
+    superscript digits) XML's Name grammar itself excludes, harmless for the German
+    market-actor names this is used on today but not a claim of full NCName correctness
+    for arbitrary input. Does NOT guarantee uniqueness across different inputs (two
+    different ``raw`` values can sanitize to the same result) — callers that need
+    document-wide-unique ids must disambiguate collisions themselves (see the lane-id
+    allocator in :func:`plantuml_to_bpmn`).
     """
     sanitized = _NCNAME_INVALID.sub("_", raw.strip()) or "_"
     return f"_{sanitized}" if sanitized[0].isdigit() or sanitized[0] in ".-" else sanitized
@@ -68,12 +74,15 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
 
         # Swimlane: |LF|
         if re.match(r"^\|[^|]+\|$", line):
-            # Strip inner whitespace too: real source has both "|MSB|" and "|MSB |" for
-            # what's clearly meant to be one actor. Left unstripped, "MSB " becomes a
-            # second, distinct lane — its own <lane> element, own flowNodeRefs — that
-            # then collides with "MSB"'s once _ncname() (rightly) strips the trailing
-            # space from both when building each lane's id.
-            current_lane = line.strip("|").strip()
+            # Normalize whitespace, not just strip it: real source has both "|MSB|" and
+            # "|MSB |" for what's clearly meant to be one actor, and (less common but seen)
+            # runs of internal whitespace like "|weiterer  MSB|". Left as two distinct
+            # strings, each becomes its own <lane> — its own flowNodeRefs, its own DI shape
+            # — which is wrong regardless of whether the two ids happen to collide once
+            # sanitized (loud, a duplicate xs:ID) or don't (silent: one actor rendered as
+            # two lanes). `" ".join(...split())` collapses any whitespace run (including
+            # leading/trailing) to a single space, so "MSB" and "MSB " become identical.
+            current_lane = " ".join(line.strip("|").split())
             continue
 
         # Start
@@ -210,8 +219,18 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
 
     lane_set = SubElement(process, "laneSet", {"id": "laneSet_1"})
     lane_elements: dict[str, Element] = {}
+    used_lane_ids: set[str] = set()
     for lane_name in lanes:
-        lane_id = f"lane_{_ncname(lane_name)}"
+        # _ncname() maps some distinct names to the same id (e.g. "Lane A" and "Lane_A"
+        # both sanitize to "Lane_A") — a collision would be a duplicate xs:ID, invalidating
+        # the whole document, not just this lane. Disambiguate with a numeric suffix.
+        base_lane_id = f"lane_{_ncname(lane_name)}"
+        lane_id = base_lane_id
+        suffix = 2
+        while lane_id in used_lane_ids:
+            lane_id = f"{base_lane_id}_{suffix}"
+            suffix += 1
+        used_lane_ids.add(lane_id)
         lane_el = SubElement(lane_set, "lane", {"id": lane_id, "name": lane_name})
         lane_elements[lane_name] = lane_el
 
@@ -485,7 +504,10 @@ def _generate_diagram(  # pylint: disable=too-many-locals,too-many-branches,too-
 
         for lane_name in lanes:
             row = lane_row[lane_name]
-            lane_id = f"lane_{_ncname(lane_name)}"
+            # Read the id back from the <lane> element itself rather than recomputing it
+            # from lane_name: plantuml_to_bpmn disambiguates colliding names with a numeric
+            # suffix, so recomputing here could silently produce a *different*, dangling id.
+            lane_id = lane_elements[lane_name].get("id", "")
             ly = row * (lane_height_each + V_GAP)
             shape = SubElement(
                 plane,
