@@ -16,9 +16,21 @@ import logging
 import re
 from pathlib import Path
 from typing import Any
-from xml.etree.ElementTree import Element, ElementTree, SubElement, indent
+from xml.etree.ElementTree import Element, ElementTree, SubElement, indent, register_namespace
 
 logger = logging.getLogger(__name__)
+
+# BPMN 2.0 + Diagram Interchange namespaces. Registered once at import time (rather than
+# on every plantuml_to_bpmn call) since ElementTree.register_namespace mutates a
+# process-global prefix map — repeating it per call was a pointless side effect.
+_NS = {
+    "": "http://www.omg.org/spec/BPMN/20100524/MODEL",
+    "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
+    "dc": "http://www.omg.org/spec/DD/20100524/DC",
+    "di": "http://www.omg.org/spec/DD/20100524/DI",
+}
+for _prefix, _uri in _NS.items():
+    register_namespace(_prefix, _uri)
 
 
 def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disable=too-many-branches,too-many-statements
@@ -148,31 +160,19 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
     if not lanes:
         lanes = ["Default"]
 
-    # BPMN namespaces
-    ns = {
-        "": "http://www.omg.org/spec/BPMN/20100524/MODEL",
-        "bpmndi": "http://www.omg.org/spec/BPMN/20100524/DI",
-        "dc": "http://www.omg.org/spec/DD/20100524/DC",
-        "di": "http://www.omg.org/spec/DD/20100524/DI",
-    }
-    for prefix, uri in ns.items():
-        if prefix:
-            Element(f"_{prefix}").tag  # noqa: B018 -- register (intentional no-op)
-            import xml.etree.ElementTree as ET  # pylint: disable=import-outside-toplevel
-
-            ET.register_namespace(prefix, uri)
-        else:
-            import xml.etree.ElementTree as ET  # pylint: disable=import-outside-toplevel
-
-            ET.register_namespace("", uri)
-
+    # Only the default (unprefixed) namespace needs declaring by hand: every plain tag
+    # below ("process", "task", "lane", ...) is unqualified, so ElementTree has no other
+    # way to bind it to the MODEL namespace. bpmndi/dc/di must NOT also be declared here —
+    # _generate_diagram uses genuine Clark-notation tags (f"{{{ns_bpmndi}}}...") for those,
+    # and ElementTree.write() always (re-)declares any namespace actually used that way on
+    # the root element regardless of what's already in its attrib — declaring them here too
+    # produced a `xmlns:bpmndi` (etc.) attribute twice on the same <definitions> tag, which
+    # is not well-formed XML — found by validating real output against the official BPMN
+    # 2.0 XSD (github.com/omg-bpmn/BPMN-MIWG or omg.org/spec/BPMN/20100501/).
     definitions = Element(
         "definitions",
         {
-            "xmlns": ns[""],
-            "xmlns:bpmndi": ns["bpmndi"],
-            "xmlns:dc": ns["dc"],
-            "xmlns:di": ns["di"],
+            "xmlns": _NS[""],
             "id": "definitions",
             "targetNamespace": "http://mako.energyerp.de",
         },
@@ -446,17 +446,15 @@ def _generate_diagram(  # pylint: disable=too-many-locals,too-many-branches,too-
         # Calculate total width
         max_col = max(col.values()) if col else 0
         total_w = LANE_HEADER + LANE_PAD * 2 + (max_col + 1) * (TASK_W + H_GAP)
-
-        SubElement(
-            plane,
-            f"{{{ns_bpmndi}}}BPMNShape",
-            {
-                "id": "laneSet_1_di",
-                "bpmnElement": "laneSet_1",
-                "isHorizontal": "true",
-            },
-        )
         lane_height_each = TASK_H + V_GAP * 2 + LANE_PAD * 2
+
+        # No shape for the laneSet itself: BPMN DI depicts pools/lanes/flow nodes, not a
+        # LaneSet — real BPMN tools don't emit one either. This used to emit one anyway
+        # (id="laneSet_1_di", bpmnElement="laneSet_1") without the Bounds child every
+        # BPMNShape requires, which is what made schema validation fail. Each individual
+        # lane below already gets its own shape with the required Bounds (not a claim that the
+        # bounds contain that lane's node shapes -- a separate, pre-existing geometry
+        # mismatch, out of scope here).
 
         for lane_name in lanes:
             row = lane_row[lane_name]

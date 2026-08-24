@@ -30,7 +30,8 @@ Homepage = "https://github.com/Hochfrequenz/makoralle"
 
 [dependency-groups]
 tests = [
-    "pytest==9.1.1"
+    "pytest==9.1.1",
+    "lxml==6.1.2"  # BPMN output validation against the official BPMN 2.0 XSD
 ]
 linting = [
     "ruff==0.16.3",
@@ -38,6 +39,7 @@ linting = [
 type_check = [
     "mypy==2.3.1",
     "types-PyYAML==6.0.12.20260518",
+    "lxml-stubs==0.5.1",
     { include-group = "tests" }
 ]
 spell_check = [
@@ -80,7 +82,6 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "unittests/**" = ["PLR2004"]
 "src/makoralle/__init__.py" = ["PLC0415"]
-"src/makoralle/serialization/bpmn.py" = ["PLC0415"]
 "src/makoralle/models/pid.py" = ["PLC2401"] # German domain field names carry ü/ä by design
 
 [mypy]
