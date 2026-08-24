@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 import yaml
 
@@ -161,10 +163,17 @@ def test_process_to_yaml_round_trips_loosely_typed_fields_after_load() -> None:
     assert process_to_yaml(restored) == yaml_str
 
 
-def test_load_yaml_round_trips_through_a_file(tmp_path) -> None:  # type: ignore[no-untyped-def]
+def test_load_yaml_round_trips_through_a_file(tmp_path: Path) -> None:
     proc = Process(id="lieferbeginn", name="Lieferbeginn", source="s", category="c")
     path = emit_yaml(proc, tmp_path)
     assert load_yaml(path) == proc
+
+
+def test_load_yaml_error_names_the_file(tmp_path: Path) -> None:
+    path = tmp_path / "broken.yaml"
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match=str(path)):
+        load_yaml(path)
 
 
 def test_process_from_yaml_rejects_empty_input() -> None:
@@ -175,6 +184,11 @@ def test_process_from_yaml_rejects_empty_input() -> None:
 def test_process_from_yaml_rejects_non_mapping_input() -> None:
     with pytest.raises(ValueError, match="mapping"):
         process_from_yaml("- a\n- b\n")
+
+
+def test_flatten_process_dict_rejects_non_mapping_wrapper() -> None:
+    with pytest.raises(ValueError, match="must be a mapping"):
+        flatten_process_dict({"process": ["a", "b"]})
 
 
 def test_process_from_dict_tolerates_bare_wrapper_keys() -> None:

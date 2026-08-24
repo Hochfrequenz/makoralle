@@ -70,8 +70,13 @@ def flatten_process_dict(data: Mapping[str, Any]) -> dict[str, Any]:
     present both at top level and inside a wrapper resolves to the wrapper's value.
     """
     flat = dict(data)
-    flat.update(flat.pop("process", None) or {})
-    flat.update(flat.pop("cross_references", None) or {})
+    for key in ("process", "cross_references"):
+        wrapper = flat.pop(key, None)
+        if wrapper is None:
+            continue
+        if not isinstance(wrapper, Mapping):
+            raise ValueError(f"{key!r} must be a mapping, got {type(wrapper).__name__}: {wrapper!r}")
+        flat.update(wrapper)
     return flat
 
 
@@ -101,5 +106,5 @@ def load_yaml(path: Path) -> Process:
     """Read a process YAML file (as written by :func:`emit_yaml`) into a :class:`Process`."""
     try:
         return process_from_yaml(path.read_text(encoding="utf-8"))
-    except ValueError as e:
+    except (ValueError, yaml.YAMLError) as e:
         raise ValueError(f"{path}: {e}") from e
