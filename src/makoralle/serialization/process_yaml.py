@@ -51,3 +51,28 @@ def emit_yaml(process: Process, output_dir: Path) -> Path:
     output_path = output_dir / f"{process.id}.yaml"
     output_path.write_text(yaml_str, encoding="utf-8")
     return output_path
+
+
+def process_from_dict(data: dict[str, Any]) -> Process:
+    """Inverse of :func:`process_to_yaml`'s dict shape: rebuild a :class:`Process`.
+
+    ``process_to_yaml`` nests ``id``/``name``/``source``/``category`` under a
+    ``process`` key and ``related_processes``/``source_documents`` under
+    ``cross_references``, both for on-disk readability; :class:`Process` itself
+    declares all of those as top-level fields. This splices the two wrapper dicts
+    back up before handing the result to :meth:`Process.model_validate`.
+    """
+    flat = dict(data)
+    flat.update(flat.pop("process", {}))
+    flat.update(flat.pop("cross_references", {}))
+    return Process.model_validate(flat)
+
+
+def process_from_yaml(yaml_str: str) -> Process:
+    """Parse ``yaml_str`` (as produced by :func:`process_to_yaml`) into a :class:`Process`."""
+    return process_from_dict(yaml.safe_load(yaml_str))
+
+
+def load_yaml(path: Path) -> Process:
+    """Read a process YAML file (as written by :func:`emit_yaml`) into a :class:`Process`."""
+    return process_from_yaml(path.read_text(encoding="utf-8"))

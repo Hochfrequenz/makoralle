@@ -1,7 +1,15 @@
 import yaml
 
-from makoralle.models.process import NamedSD, Process, SDStep, SequenceDiagram, UseCase
-from makoralle.serialization.process_yaml import process_to_yaml
+from makoralle.models.process import (
+    CrossReference,
+    NamedSD,
+    Process,
+    SDStep,
+    SequenceDiagram,
+    SourceDocuments,
+    UseCase,
+)
+from makoralle.serialization.process_yaml import process_from_yaml, process_to_yaml
 
 
 def test_process_to_yaml() -> None:
@@ -74,3 +82,28 @@ def test_process_to_yaml_serializes_diagrams() -> None:
     # backward-compat: sequence_diagram still present
     assert "sequence_diagram" in parsed
     assert len(parsed["sequence_diagram"]["steps"]) == 1
+
+
+def test_process_from_yaml_round_trips() -> None:
+    proc = Process(
+        id="lieferbeginn",
+        name="Lieferbeginn",
+        source="GPKE Teil 2, Kapitel 2.1",
+        category="Zuordnungsprozesse",
+        use_case=UseCase(
+            goal="Zuordnung eines LF",
+            description="Anmeldung",
+            roles=["LF", "NB"],
+            preconditions=["Vertrag liegt vor"],
+        ),
+        sequence_diagram=SequenceDiagram(
+            participants=["LF", "NB"],
+            steps=[
+                SDStep(nr=1, sender="LF", receiver="NB", message="Anmeldung"),
+            ],
+        ),
+        related_processes=[CrossReference(id="kuendigung", relation="folgt_auf")],
+        source_documents=SourceDocuments(uc_sd="GPKE Teil 2, Kapitel 2.1"),
+    )
+    restored = process_from_yaml(process_to_yaml(proc))
+    assert restored == proc
