@@ -147,9 +147,9 @@ def test_process_to_yaml_round_trips_loosely_typed_fields_after_load() -> None:
             ),
         ],
         pid_mappings=[
-            PIDMapping(
-                lfd_nr=1, ahb="GPKE", anwendungsfall="Lieferbeginn", prüfidentifikator=55001
-            ).model_dump(exclude_none=True),
+            PIDMapping(lfd_nr=1, ahb="GPKE", anwendungsfall="Lieferbeginn", prüfidentifikator=55001).model_dump(
+                exclude_none=True
+            ),
         ],
         activity_diagram=ActivityDiagram(
             participants=["LF"],
@@ -201,9 +201,7 @@ def test_process_from_dict_tolerates_bare_wrapper_keys() -> None:
 
 def test_process_from_dict_rejects_unknown_field() -> None:
     with pytest.raises(ValueError, match="unknown"):
-        process_from_dict(
-            {"process": {"id": "x", "name": "X", "source": "s", "category": "c"}, "use_cases": {}}
-        )
+        process_from_dict({"process": {"id": "x", "name": "X", "source": "s", "category": "c"}, "use_cases": {}})
 
 
 def test_flatten_process_dict_wrapper_key_wins_on_collision() -> None:
