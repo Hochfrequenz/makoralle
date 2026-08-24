@@ -32,6 +32,20 @@ _NS = {
 for _prefix, _uri in _NS.items():
     register_namespace(_prefix, _uri)
 
+_NCNAME_INVALID = re.compile(r"[^\w.\-]", re.UNICODE)
+
+
+def _ncname(raw: str) -> str:
+    """Make ``raw`` safe to use as (part of) an xs:ID/NCName: BPMN element ids must be
+    NCNames, which forbid whitespace and most punctuation and can't start with a digit,
+    ``.`` or ``-``. Swimlane names come from PlantUML source text verbatim (e.g. "weiterer
+    MSB") and were used unsanitized, so a lane name with a space produced an invalid id.
+    ``\\w`` (Unicode-aware) keeps letters like ü/ä unchanged — only whitespace/punctuation
+    is replaced — so ids stay human-readable.
+    """
+    sanitized = _NCNAME_INVALID.sub("_", raw.strip()) or "_"
+    return f"_{sanitized}" if sanitized[0] in "0.-" else sanitized
+
 
 def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disable=too-many-branches,too-many-statements
     """Parse PlantUML activity diagram into a flat flow list."""
@@ -54,7 +68,12 @@ def _parse_plantuml_to_flow(puml: str) -> list[dict[str, Any]]:  # pylint: disab
 
         # Swimlane: |LF|
         if re.match(r"^\|[^|]+\|$", line):
-            current_lane = line.strip("|")
+            # Strip inner whitespace too: real source has both "|MSB|" and "|MSB |" for
+            # what's clearly meant to be one actor. Left unstripped, "MSB " becomes a
+            # second, distinct lane — its own <lane> element, own flowNodeRefs — that
+            # then collides with "MSB"'s once _ncname() (rightly) strips the trailing
+            # space from both when building each lane's id.
+            current_lane = line.strip("|").strip()
             continue
 
         # Start
@@ -192,7 +211,7 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
     lane_set = SubElement(process, "laneSet", {"id": "laneSet_1"})
     lane_elements: dict[str, Element] = {}
     for lane_name in lanes:
-        lane_id = f"lane_{lane_name}"
+        lane_id = f"lane_{_ncname(lane_name)}"
         lane_el = SubElement(lane_set, "lane", {"id": lane_id, "name": lane_name})
         lane_elements[lane_name] = lane_el
 
@@ -286,9 +305,17 @@ def plantuml_to_bpmn(  # pylint: disable=too-many-locals,too-many-branches,too-m
                 SubElement(process, tag, {"id": item_id, "name": "", "gatewayDirection": "Converging"})
                 if item_lane in lane_elements:
                     SubElement(lane_elements[item_lane], "flowNodeRef").text = item_id
-                # Connect all branch ends to merge
+                # Connect all branch ends to merge. Two branches with no content between
+                # the split and the next `fork again`/`else` (e.g. a bare lane switch)
+                # never advance `prev_id` past the split's own id, so `prev_ends` can hold
+                # the same source id more than once; emitting one sequenceFlow per
+                # occurrence would give two elements the same id (BPMN's sourceRef+targetRef
+                # pair identifies one edge, and xs:ID must be unique document-wide) — dedup
+                # while keeping first-seen order so branch order stays visible in the XML.
+                seen_ends: set[str] = set()
                 for end_id in gw["prev_ends"]:
-                    if end_id:
+                    if end_id and end_id not in seen_ends:
+                        seen_ends.add(end_id)
                         sf_id = f"sf_{end_id}_{item_id}"
                         SubElement(process, "sequenceFlow", {"id": sf_id, "sourceRef": end_id, "targetRef": item_id})
                 prev_id = item_id
@@ -458,7 +485,7 @@ def _generate_diagram(  # pylint: disable=too-many-locals,too-many-branches,too-
 
         for lane_name in lanes:
             row = lane_row[lane_name]
-            lane_id = f"lane_{lane_name}"
+            lane_id = f"lane_{_ncname(lane_name)}"
             ly = row * (lane_height_each + V_GAP)
             shape = SubElement(
                 plane,

@@ -6,12 +6,12 @@ pydantic model (bpmn.py has none; it builds XML directly).
 Fixtures are hand-authored PlantUML snippets, not real dataset content — this package
 is public, machine-readable_mako-prozesse is private.
 
-Known NOT yet covered here (separate root causes, tracked for a follow-up fix): a lane
-name containing a space produces an invalid xs:ID (``lane_<name>`` isn't sanitized), and
-some fork/parallel-gateway shapes emit a duplicate sequenceFlow/edge id. Every fixture
-below avoids both — PUML_WITH_FORK included, verified against the vendored schema to not
-trigger the duplicate-id case — so this suite exercises exactly what it fixes:
-well-formedness and the (now removed, see PUML_WITH_LANES's test) invalid laneSet shape.
+Also covers three bugs found by validating all 135 real files in the (private)
+machine-readable_mako-prozesse dataset against this same vendored schema: a lane name
+containing a space produced an invalid xs:ID; two lane markers differing only in
+whitespace (``|MSB|`` / ``|MSB |``) were treated as two distinct lanes that then
+collided once their (correctly sanitized) ids matched; and some fork/parallel-gateway
+shapes with an empty branch emitted a duplicate sequenceFlow/edge id.
 """
 
 from pathlib import Path
@@ -103,6 +103,39 @@ PUML_EMPTY = """
 @enduml
 """
 
+PUML_WITH_LANE_NAME_SPACE = """
+@startuml
+|weiterer MSB|
+start
+:Etwas tun;
+stop
+@enduml
+"""
+
+PUML_WITH_INCONSISTENT_LANE_WHITESPACE = """
+@startuml
+|MSB|
+start
+:Erste Aufgabe;
+|MSB |
+:Zweite Aufgabe;
+stop
+@enduml
+"""
+
+PUML_WITH_TWO_EMPTY_FORK_BRANCHES = """
+@startuml
+|NB|
+start
+fork
+fork again
+fork again
+:Aufgabe C;
+end fork
+stop
+@enduml
+"""
+
 
 @pytest.mark.parametrize(
     "puml",
@@ -113,6 +146,9 @@ PUML_EMPTY = """
         pytest.param(PUML_WITH_SUBPROCESS, id="with_subprocess_ref"),
         pytest.param(PUML_WITH_FORK, id="with_fork_join"),
         pytest.param(PUML_EMPTY, id="empty_diagram"),
+        pytest.param(PUML_WITH_LANE_NAME_SPACE, id="lane_name_with_space"),
+        pytest.param(PUML_WITH_INCONSISTENT_LANE_WHITESPACE, id="inconsistent_lane_whitespace"),
+        pytest.param(PUML_WITH_TWO_EMPTY_FORK_BRANCHES, id="two_empty_fork_branches"),
     ],
 )
 def test_plantuml_to_bpmn_is_well_formed_and_schema_valid(puml: str, bpmn_schema: etree.XMLSchema) -> None:
@@ -155,3 +191,45 @@ def test_no_shape_for_the_lane_set_itself() -> None:
     assert len(lane_shapes) == 2  # LF, NB
     for shape in lane_shapes:
         assert shape.find("dc:Bounds", ns) is not None
+
+
+MODEL_NS = {"m": "http://www.omg.org/spec/BPMN/20100524/MODEL"}
+
+
+def test_lane_name_with_a_space_gets_a_valid_ncname_id() -> None:
+    """Regression test: lane ids were built as f"lane_{lane_name}" with the PlantUML
+    source text used verbatim — a real dataset lane name like "weiterer MSB" produced
+    the id "lane_weiterer MSB", not a legal xs:ID (NCName forbids whitespace)."""
+    xml = plantuml_to_bpmn(PUML_WITH_LANE_NAME_SPACE, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    lane = doc.find(".//m:lane", MODEL_NS)
+    assert lane is not None
+    assert lane.get("id") == "lane_weiterer_MSB"
+    assert lane.get("name") == "weiterer MSB"  # the human-readable name is untouched
+
+
+def test_inconsistent_lane_whitespace_is_one_lane_not_two() -> None:
+    """Regression test: real dataset source has both "|MSB|" and "|MSB |" (trailing
+    space) for what's clearly meant to be one actor. Before normalizing, that produced
+    two distinct <lane> elements whose ids then collided once whitespace was correctly
+    stripped when sanitizing each into an NCName — a real dataset file
+    (reklamation_von_werten_beim_msb) failed schema validation on exactly this."""
+    xml = plantuml_to_bpmn(PUML_WITH_INCONSISTENT_LANE_WHITESPACE, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    lanes = doc.findall(".//m:lane", MODEL_NS)
+    assert len(lanes) == 1
+    assert lanes[0].get("name") == "MSB"
+    # start, both tasks (one per swimlane marker), and stop all belong to the single lane
+    assert len(lanes[0].findall("m:flowNodeRef", MODEL_NS)) == 4
+
+
+def test_two_empty_fork_branches_do_not_duplicate_the_merge_sequence_flow() -> None:
+    """Regression test: a fork branch with no content before the next `fork again`
+    never advances past the split gateway's own id, so two such empty branches both
+    record that same id as "where this branch ends" — emitting one sequenceFlow per
+    recorded end then wrote the same (id, sourceRef, targetRef) twice. A real dataset
+    file (beginn_der_ersatz-_grundversorgung) had this exact duplicate."""
+    xml = plantuml_to_bpmn(PUML_WITH_TWO_EMPTY_FORK_BRANCHES, "Test Process")
+    doc = etree.fromstring(xml.encode("utf-8"))
+    flow_ids = [sf.get("id") for sf in doc.findall(".//m:sequenceFlow", MODEL_NS)]
+    assert len(flow_ids) == len(set(flow_ids)), f"duplicate sequenceFlow id(s) in: {flow_ids}"
