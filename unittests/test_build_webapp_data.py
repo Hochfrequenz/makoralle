@@ -72,6 +72,7 @@ def test_build_index_entry_extracts_summary_fields() -> None:
         "roles": ["NB", "ÜNB"],
         "participants": ["NB", "ÜNB"],
         "pids": [55001, 55002],
+        "pidNames": [],
         "stepCount": 2,
         "sdCount": 1,
         "hasDeadlines": True,
@@ -1061,3 +1062,68 @@ def test_a_whitespace_only_name_does_not_claim_the_number_either() -> None:
         review_notes=[],
     )
     assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
+
+
+def test_the_index_carries_the_names_of_the_pids_a_process_uses() -> None:
+    """mako_prozesse#167: the list view's search reads the index, not the detail files, so a
+    reader who does not already know the number cannot find a process by its Anwendungsfall —
+    which is the whole reason the name was added (makorele#52). The names are already in the
+    process payload; only the compact entry never carried them."""
+    entry = build_index_entry(
+        {
+            **SAMPLE,
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung verb. MaLo"},
+                {"prüfidentifikator": "55002", "anwendungsfall": "Abmeldung verb. MaLo"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Abmeldung verb. MaLo", "Anmeldung verb. MaLo"]
+
+
+def test_the_index_names_only_the_pids_the_process_actually_references() -> None:
+    """`pid_mappings` is the process's slice of the official PID list and can name a
+    Prüfidentifikator no step refers to. Carrying those would make the process findable under a
+    name its diagram never shows — a false hit, and one the reader cannot then locate on the page."""
+    entry = build_index_entry(
+        {
+            **SAMPLE,
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung verb. MaLo"},
+                {"prüfidentifikator": "99999", "anwendungsfall": "Nirgends referenziert"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Anmeldung verb. MaLo"]
+
+
+def test_the_index_carries_names_from_every_diagram_variant() -> None:
+    """`pids` already aggregates across all SDs so a PID living only in a non-primary variant
+    stays searchable; the names have to follow the same rule or search finds the number but not
+    the word for it."""
+    entry = build_index_entry(
+        {
+            **TWO_SD,
+            "pid_mappings": [
+                {"prüfidentifikator": "11001", "anwendungsfall": "Primär"},
+                {"prüfidentifikator": "11003", "anwendungsfall": "Nur in der zweiten Sicht"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Nur in der zweiten Sicht", "Primär"]
+
+
+def test_a_process_without_pid_mappings_gets_an_empty_name_list() -> None:
+    """An older extraction carries no mappings at all; the field must still exist so the webapp
+    never has to distinguish "no names" from "field missing"."""
+    entry = build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True)
+    assert entry["pidNames"] == []

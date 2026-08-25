@@ -77,6 +77,13 @@ def build_index_entry(
     # list / PID search.
     has_deadlines = any(s.get("deadline") or s.get("deadline_rule") for d in diagrams for s in (d.get("steps") or []))
     all_pids = sorted({pid for d in diagrams for s in (d.get("steps") or []) for pid in (s.get("pid_refs") or [])})
+    # The list view searches the index, so a reader who does not already know the number needs
+    # the Anwendungsfall here too — that is what makorele#52 was asked for and mako_prozesse#167
+    # is missing. Restricted to the PIDs the diagrams actually reference: `pid_mappings` is the
+    # process's slice of the official list and can name one no step shows, which would make the
+    # process findable under a word its page never displays.
+    names = _pid_names(process.get("pid_mappings") or [])
+    all_pid_names = sorted({names[pid] for pid in all_pids if names.get(pid)})
     participants = _ordered_union(d.get("participants") or [] for d in diagrams)
     return {
         "id": p.get("id") or "",
@@ -85,6 +92,7 @@ def build_index_entry(
         "roles": uc.get("roles") or [],
         "participants": participants,
         "pids": all_pids,
+        "pidNames": all_pid_names,
         "stepCount": len(primary_steps),
         "sdCount": len(diagrams),
         "hasDeadlines": has_deadlines,
