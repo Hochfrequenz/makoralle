@@ -94,8 +94,8 @@ def _clean_note_text(text: str) -> str:
 #: after stripping it is the part the compact tag cannot carry.
 #:
 #: The `^` is load-bearing: without it `re.sub` would strip the marker wherever it appears, and 48
-#: corpus sentences carry it mid-prose ("Bei Fall a: Unverzüglich nach X"), which would leave a
-#: mangled residual. `\b` and the punctuation class are belt-and-braces — no corpus raw ends the
+#: corpus rows (35 distinct sentences) carry it mid-prose ("Bei Fall a: Unverzüglich nach X"), which would leave a
+#: mangled residual. The leading `\s*`, the `\b` and the punctuation class are belt-and-braces — no corpus raw ends the
 #: marker at a colon or runs it into a longer word — and are disclosed as such rather than covered
 #: by a test no input can fail.
 _UNVERZUEGLICH_MARKER = re.compile(r"^\s*(?:unverzüglich|sofort)\b[\s,.;:]*", re.I)
@@ -114,9 +114,10 @@ def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
     that repeats what the arrow already says is noise on a diagram that has little room. That
     comparison is makorele#101's remaining scope.
 
-    Why a note rather than a longer tag: the anchors are multi-word — up to 63 characters in the
-    corpus, which would make a 73-character tag out of "2 WT vor dem andernfalls erforderlichen
-    Versand der BG-SZR (Kategorie B)" — so the compact tag cannot carry them and stops being a
+    Why a note rather than a longer tag: the anchors are multi-word — 63 characters for "dem
+    andernfalls erforderlichen Versand der BG-SZR (Kategorie B)", and longer elsewhere in the
+    corpus — which makes a 73-character tag out of that one, on an arrow label already 57
+    characters long. So the compact tag cannot carry them and stops being a
     tag. Keeping ``{u}`` on the arrow and putting the sentence beside it is the form
     ``reference`` already uses, and it generalises to every remaining lossy row.
     """

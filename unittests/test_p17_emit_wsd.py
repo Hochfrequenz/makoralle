@@ -1217,3 +1217,33 @@ def test_the_sentence_beyond_the_tag_is_empty_where_the_tag_says_everything() ->
         beyond(DeadlineRule(type="unverzüglich", raw="Bei Fall a: Unverzüglich nach X."))
         == "Bei Fall a: Unverzüglich nach X"
     )
+
+
+def test_a_dropped_lossy_unverzueglich_is_named_in_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    """`_log_dropped` names the sentence it just lost, not only a `complex`/`reference` one.
+
+    Its rationale used to be that an `unverzüglich` rule "survives the drop as structure" — true
+    while `{u}` said everything, false for a row whose sentence carries the event (makorele#101).
+    Nothing in the v0.0.16 corpus reaches this path today (all 220 land `right of` a known lane),
+    so only a test can hold the claim.
+    """
+    lossy = SDStep(
+        nr=1,
+        sender="?",
+        receiver="?",
+        message="Eins",
+        deadline_rule=DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Kenntnisnahme."),
+    )
+    structured = SDStep(
+        nr=2,
+        sender="?",
+        receiver="?",
+        message="Zwei",
+        deadline_rule=DeadlineRule(type="unverzüglich", business_days=1, raw="Unverzüglich, spätestens 1 WT."),
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        emit_wsd(SequenceDiagram(participants=["?"], steps=[lossy, structured]))
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("dropping step 1" in m and "Unverzüglich nach Kenntnisnahme." in m for m in messages), messages
+    # the tag still carries this one, so announcing a loss would announce one that did not happen
+    assert any(m == "dropping step 2 from the diagram: no endpoint and no lane is known" for m in messages), messages
