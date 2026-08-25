@@ -72,6 +72,7 @@ def test_build_index_entry_extracts_summary_fields() -> None:
         "roles": ["NB", "ÜNB"],
         "participants": ["NB", "ÜNB"],
         "pids": [55001, 55002],
+        "pidNames": [],
         "stepCount": 2,
         "sdCount": 1,
         "hasDeadlines": True,
@@ -1061,3 +1062,129 @@ def test_a_whitespace_only_name_does_not_claim_the_number_either() -> None:
         review_notes=[],
     )
     assert [row["name"] for row in detail["pids"]] == ["Anmeldung"]
+
+
+def test_the_index_carries_the_names_of_the_pids_a_process_uses() -> None:
+    """mako_prozesse#167: the list view's search reads the index, not the detail files, so a
+    reader who does not already know the number cannot find a process by its Anwendungsfall —
+    which is the whole reason the name was added (makorele#52). The names are already in the
+    process payload; only the compact entry never carried them."""
+    entry = build_index_entry(
+        {
+            **SAMPLE,
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung verb. MaLo"},
+                {"prüfidentifikator": "55002", "anwendungsfall": "Abmeldung verb. MaLo"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Abmeldung verb. MaLo", "Anmeldung verb. MaLo"]
+
+
+def test_the_index_names_only_the_pids_the_process_actually_references() -> None:
+    """`pid_mappings` is the process's slice of the official PID list and can name a
+    Prüfidentifikator no step refers to. Carrying those would make the process findable under a
+    name its diagram never shows — a false hit, and one the reader cannot then locate on the page."""
+    entry = build_index_entry(
+        {
+            **SAMPLE,
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung verb. MaLo"},
+                {"prüfidentifikator": "99999", "anwendungsfall": "Nirgends referenziert"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Anmeldung verb. MaLo"]
+
+
+def test_the_index_carries_names_from_every_diagram_variant() -> None:
+    """`pids` already aggregates across all SDs so a PID living only in a non-primary variant
+    stays searchable; the names have to follow the same rule or search finds the number but not
+    the word for it."""
+    entry = build_index_entry(
+        {
+            **TWO_SD,
+            "pid_mappings": [
+                {"prüfidentifikator": "11001", "anwendungsfall": "Primär"},
+                {"prüfidentifikator": "11003", "anwendungsfall": "Nur in der zweiten Sicht"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Nur in der zweiten Sicht", "Primär"]
+
+
+def test_a_process_without_pid_mappings_gets_an_empty_name_list() -> None:
+    """An older extraction carries no mappings at all; the field must still exist so the webapp
+    never has to distinguish "no names" from "field missing"."""
+    entry = build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True)
+    assert entry["pidNames"] == []
+
+
+def test_a_pid_whose_rows_disagree_is_searchable_under_every_spelling() -> None:
+    """The label takes the first row, because it has one line to live on. A search text is under no
+    such pressure, and dropping a spelling means whoever types it gets no hit at all. The real
+    instance: 19101 in `geschäftsdatenanfrage` reads "Ablehnung der Anfrage  Stammdaten" with a
+    double space on the row that wins, and the ordinary single space on its other two rows — and the
+    webapp neither collapses whitespace nor matches loosely."""
+    process = {
+        **SAMPLE,
+        "pid_mappings": [
+            {"prüfidentifikator": "55001", "anwendungsfall": "Ablehnung der Anfrage  Stammdaten"},
+            {"prüfidentifikator": "55001", "anwendungsfall": "Ablehnung der Anfrage Stammdaten"},
+        ],
+    }
+    entry = build_index_entry(process, has_bpmn=False, has_review=False, has_sequence=True)
+    assert entry["pidNames"] == ["Ablehnung der Anfrage  Stammdaten", "Ablehnung der Anfrage Stammdaten"]
+    # …while the detail row, which is a label, still shows exactly one of them.
+    detail = build_detail(process, review_notes=[])
+    assert {row["name"] for row in detail["pids"] if row["pid"] == 55001} == {"Ablehnung der Anfrage  Stammdaten"}
+
+
+def test_two_pids_sharing_an_anwendungsfall_are_named_once() -> None:
+    """The common case, not an edge: 405 named PIDs in v0.0.17 carry only 314 distinct names, and 23
+    processes reference several PIDs that share one — nine of the PIDs in
+    `bestellung_zur_stammdatenänderung` read "Rückmeldung/Anfrage Daten der MaLo". Repeating them
+    buys the search nothing and grows a file that is committed to the dataset repo."""
+    entry = build_index_entry(
+        {
+            **SAMPLE,
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "Abr.-Daten BK-Abr. verb. MaLo"},
+                {"prüfidentifikator": "55002", "anwendungsfall": "Abr.-Daten BK-Abr. verb. MaLo"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Abr.-Daten BK-Abr. verb. MaLo"]
+
+
+def test_the_names_are_sorted_not_left_in_row_order() -> None:
+    """Sortedness is load-bearing for a reason no reader sees: `processes.json` is committed to the
+    dataset repo, so an order that follows set iteration would churn the file on every regeneration
+    and bury the real diff. Four names, listed in an order that is not the alphabetical one."""
+    entry = build_index_entry(
+        {
+            **TWO_SD,
+            "pid_mappings": [
+                {"prüfidentifikator": "11001", "anwendungsfall": "Wechselanfrage"},
+                {"prüfidentifikator": "11002", "anwendungsfall": "Bestätigung"},
+                {"prüfidentifikator": "11003", "anwendungsfall": "Ablehnung"},
+                {"prüfidentifikator": "11003", "anwendungsfall": "Zustimmung"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Ablehnung", "Bestätigung", "Wechselanfrage", "Zustimmung"]
