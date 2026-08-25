@@ -1150,10 +1150,10 @@ def test_a_pid_whose_rows_disagree_is_searchable_under_every_spelling() -> None:
 
 
 def test_two_pids_sharing_an_anwendungsfall_are_named_once() -> None:
-    """The common case, not an edge: 405 named PIDs in v0.0.17 carry only 313 distinct names, and 23
-    processes reference several PIDs that share one — `abrechnungsdaten_bilanzkreisabrechnung` has
-    four rows reading "Abr.-Daten BK-Abr. verb. MaLo". Repeating them buys the search nothing and
-    grows a file that is committed to the dataset repo."""
+    """The common case, not an edge: 405 named PIDs in v0.0.17 carry only 314 distinct names, and 23
+    processes reference several PIDs that share one — nine of the PIDs in
+    `bestellung_zur_stammdatenänderung` read "Rückmeldung/Anfrage Daten der MaLo". Repeating them
+    buys the search nothing and grows a file that is committed to the dataset repo."""
     entry = build_index_entry(
         {
             **SAMPLE,
