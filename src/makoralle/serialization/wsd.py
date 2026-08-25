@@ -95,10 +95,12 @@ def _clean_note_text(text: str) -> str:
 #:
 #: The `^` is load-bearing: without it `re.sub` would strip the marker wherever it appears, and 48
 #: corpus rows (35 distinct sentences) carry it mid-prose ("Bei Fall a: Unverzüglich nach X"), which would leave a
-#: mangled residual. The leading `\s*`, the `\b` and the punctuation class are belt-and-braces — no corpus raw ends the
-#: marker at a colon or runs it into a longer word — and are disclosed as such rather than covered
-#: by a test no input can fail.
-_UNVERZUEGLICH_MARKER = re.compile(r"^\s*(?:unverzüglich|sofort)\b[\s,.;:]*", re.I)
+#: mangled residual. `!` and `?` are in the class because "Unverzüglich!" would otherwise leave the
+#: bare "!" as a residual and earn a note that says nothing (Copilot); no corpus raw carries either
+#: character, so it is hardening. The leading `\s*`, the `\b` and the rest of the punctuation class
+#: are belt-and-braces too — no corpus raw ends the marker at a colon or runs it into a longer word
+#: — and are disclosed as such rather than covered by a test no input can fail.
+_UNVERZUEGLICH_MARKER = re.compile(r"^\s*(?:unverzüglich|sofort)\b[\s,.;:!?]*", re.I)
 
 
 def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
@@ -125,7 +127,7 @@ def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
         return ""
     if rule.latest_time or rule.business_days is not None or rule.reference_step:
         return ""
-    return _UNVERZUEGLICH_MARKER.sub("", rule.raw or "").strip(" .;,")
+    return _UNVERZUEGLICH_MARKER.sub("", rule.raw or "").strip(" .;,!?")
 
 
 def _deadline_note(step: SDStep, known_lanes: list[str]) -> str | None:

@@ -1206,6 +1206,10 @@ def test_the_sentence_beyond_the_tag_is_empty_where_the_tag_says_everything() ->
 
     assert beyond(DeadlineRule(type="unverzüglich", raw="Unverzüglich.")) == ""
     assert beyond(DeadlineRule(type="unverzüglich", raw="Sofort.")) == ""
+    # CONSTRUCTED: no corpus raw carries "!" or "?", but without them in the class the bare
+    # punctuation survives as a residual and earns a note that says nothing (Copilot).
+    assert beyond(DeadlineRule(type="unverzüglich", raw="Unverzüglich!")) == ""
+    assert beyond(DeadlineRule(type="unverzüglich", raw="Sofort?")) == ""
     assert beyond(DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Kenntnisnahme.")) == "nach Kenntnisnahme"
     # a structured tag already carries the bound
     assert beyond(DeadlineRule(type="unverzüglich", business_days=1, raw="Unverzüglich, spätestens 1 WT.")) == ""
