@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from pathlib import Path
 
 from makoralle.models.process import (
@@ -89,6 +90,37 @@ def _clean_note_text(text: str) -> str:
     return " ".join((text or "").split())
 
 
+#: The word an "unverzüglich" Frist opens with, and the punctuation that follows it. What remains
+#: after stripping it is the part the compact tag cannot carry.
+_UNVERZUEGLICH_MARKER = re.compile(r"^\s*(?:unverzüglich|sofort)\b[\s,.;:]*", re.I)
+
+
+def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
+    """What an ``unverzüglich`` rule's own sentence says that its tag does not, or "".
+
+    Only for the rows whose tag comes out bare — no clock, no working days, no step, so
+    :func:`_deadline_tag` renders ``{u}`` and nothing else. Those are the ones where the sentence
+    carries an event the reader acts on and the tag carries none of it: "Unverzüglich nach
+    Kenntnisnahme", "Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung".
+
+    Deliberately *not* extended to a row that already has a structured tag. Some of those are
+    lossy too, but deciding which needs comparing each tag against its own sentence, and a note
+    that repeats what the arrow already says is noise on a diagram that has little room. That
+    comparison is makorele#101's remaining scope.
+
+    Why a note rather than a longer tag: the anchors are multi-word — up to 63 characters in the
+    corpus, which would make a 73-character tag out of "2 WT vor dem andernfalls erforderlichen
+    Versand der BG-SZR (Kategorie B)" — so the compact tag cannot carry them and stops being a
+    tag. Keeping ``{u}`` on the arrow and putting the sentence beside it is the form
+    ``reference`` already uses, and it generalises to every remaining lossy row.
+    """
+    if rule.type != "unverzüglich":
+        return ""
+    if rule.latest_time or rule.business_days is not None or rule.reference_step:
+        return ""
+    return _UNVERZUEGLICH_MARKER.sub("", rule.raw or "").strip(" .;,")
+
+
 def _deadline_note(step: SDStep, known_lanes: list[str]) -> str | None:
     """The note for a Frist that only exists as prose, or None.
 
@@ -107,7 +139,12 @@ def _deadline_note(step: SDStep, known_lanes: list[str]) -> str | None:
     exactly what ``extract_review_notes`` puts on the "Prüfung nötig" worklist, so it
     spans the diagram alongside the step instead (makoralle#37)."""
     dl = step.deadline_rule
-    if not dl or dl.type not in ("complex", "reference") or not dl.raw:
+    if not dl or not dl.raw:
+        return None
+    # A bare-tagged `unverzüglich` whose sentence says more joins the two note types: it is real
+    # and readable, just not compact, which is exactly `reference`'s situation (makorele#101).
+    lossy_unverzueglich = bool(_unverzueglich_sentence_beyond_the_tag(dl))
+    if dl.type not in ("complex", "reference") and not lossy_unverzueglich:
         return None
     spanning = False
     if _has_ref_prefix(step.message):
@@ -137,7 +174,9 @@ def _deadline_note(step: SDStep, known_lanes: list[str]) -> str | None:
     # a participant), a placement decided by punctuation inside a name is a coincidence, not a rule.
     # A one-lane span goes "over" as well, so the Frist sits the way the step it belongs to sits.
     placement = "over" if spanning else "right of"
-    if dl.type == "reference":
+    if dl.type == "reference" or lossy_unverzueglich:
+        # Unflagged for the same reason `reference` is: the sentence is readable and real, so
+        # putting it on the "Prüfung nötig" worklist would ask for work that is already done.
         return f"note {placement} {who}: (i) Frist: {text}"
     return f"note {placement} {who}: (!) Frist: {text}  [REVIEW]"
 
