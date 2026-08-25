@@ -44,9 +44,12 @@ def test_deadline_note_terminiert_and_structured_get_no_note() -> None:
         _deadline_note(_step_with_deadline(DeadlineRule(type="unverzüglich", raw="Unverzüglich.")), ["LF", "NB"])
         is None
     )
-    # the tag carries the bound, so the note would repeat the arrow
-    structured = DeadlineRule(type="unverzüglich", business_days=1, reference_step=2, raw="Unverzüglich nach Nr. 2.")
-    assert _deadline_note(_step_with_deadline(structured), ["LF", "NB"]) is None
+    # the tag carries the bound, so the note would repeat the arrow — one case per disjunct of the
+    # guard, because a fixture setting two of them lets each hide the other
+    for kwargs in ({"business_days": 1}, {"latest_time": "15:00"}, {"reference_step": 2}):
+        structured = DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Nr. 2.", **kwargs)
+        assert _unverzueglich_sentence_beyond_the_tag(structured) == ""
+        assert _deadline_note(_step_with_deadline(structured), ["LF", "NB"]) is None
 
 
 def test_emit_flat() -> None:
@@ -1208,3 +1211,9 @@ def test_the_sentence_beyond_the_tag_is_empty_where_the_tag_says_everything() ->
     assert beyond(DeadlineRule(type="unverzüglich", business_days=1, raw="Unverzüglich, spätestens 1 WT.")) == ""
     # and a type that is not unverzüglich is not this predicate's business
     assert beyond(DeadlineRule(type="reference", raw="Gemäß Rahmenvertrag.")) == ""
+    # the marker is stripped only where the sentence opens with it: 48 corpus sentences carry it
+    # mid-prose, and stripping it there would leave a mangled residual
+    assert (
+        beyond(DeadlineRule(type="unverzüglich", raw="Bei Fall a: Unverzüglich nach X."))
+        == "Bei Fall a: Unverzüglich nach X"
+    )

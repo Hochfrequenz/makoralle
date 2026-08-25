@@ -92,6 +92,12 @@ def _clean_note_text(text: str) -> str:
 
 #: The word an "unverzüglich" Frist opens with, and the punctuation that follows it. What remains
 #: after stripping it is the part the compact tag cannot carry.
+#:
+#: The `^` is load-bearing: without it `re.sub` would strip the marker wherever it appears, and 48
+#: corpus sentences carry it mid-prose ("Bei Fall a: Unverzüglich nach X"), which would leave a
+#: mangled residual. `\b` and the punctuation class are belt-and-braces — no corpus raw ends the
+#: marker at a colon or runs it into a longer word — and are disclosed as such rather than covered
+#: by a test no input can fail.
 _UNVERZUEGLICH_MARKER = re.compile(r"^\s*(?:unverzüglich|sofort)\b[\s,.;:]*", re.I)
 
 
@@ -290,13 +296,15 @@ def _log_dropped(step: SDStep) -> None:
     with no endpoint and no lane it has nowhere to go either, and it is the text a human needs in
     order to structure it (makoralle#37). Two warnings for one loss would be two things to count.
 
-    "Only as prose" covers both `complex` (nobody has structured it yet) and `reference` (real but
-    irreducible — it points at another table or a contract). A `terminiert` or `unverzüglich` rule is
-    not named: it survives the drop as structure, so reporting it would announce a loss that did not
-    happen.
+    "Only as prose" covers `complex` (nobody has structured it yet), `reference` (real but
+    irreducible — it points at another table or a contract), and, since makorele#101, a
+    bare-tagged `unverzüglich` whose sentence says more than `{u}`: for those the note *is* what
+    carries the event, so dropping it is a loss like the other two. A `terminiert` rule, and an
+    `unverzüglich` whose tag carries the bound, are still not named — they survive the drop as
+    structure, so reporting them would announce a loss that did not happen.
     """
     dl = step.deadline_rule
-    raw = dl.raw if dl and dl.type in ("complex", "reference") else None
+    raw = dl.raw if dl and (dl.type in ("complex", "reference") or _unverzueglich_sentence_beyond_the_tag(dl)) else None
     if raw:
         logger.warning(
             "dropping step %s from the diagram: no endpoint and no lane is known; its unstructured "
