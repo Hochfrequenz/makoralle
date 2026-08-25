@@ -9,8 +9,8 @@ import yaml
 
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
-from makoralle.models.process import REF_PREFIX, is_known_actor, is_ref_step
-from makoralle.serialization.wsd import span_of_lanes
+from makoralle.models.process import REF_PREFIX, DeadlineRule, is_known_actor, is_ref_step
+from makoralle.serialization.wsd import _unverzueglich_sentence_beyond_the_tag, span_of_lanes
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +266,15 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     participants = sd.get("participants", [])
     types = {(s.get("deadline_rule") or {}).get("type") for s in steps}
     has_tags = bool(types & {"unverzüglich", "parallel", "terminiert"})
-    has_reference = "reference" in types
+    # Since makorele#101 a bare-tagged `unverzüglich` whose sentence says more also renders as an
+    # unflagged `(i)` note, so keying this entry on the `reference` type alone would leave 107 of
+    # the 228 shipped diagrams showing an `(i)` marker the legend does not define — the same
+    # failure the `(!)` comment below records.
+    has_reference = "reference" in types or any(
+        _unverzueglich_sentence_beyond_the_tag(DeadlineRule.model_validate(s["deadline_rule"]))
+        for s in steps
+        if s.get("deadline_rule")
+    )
     has_complex = "complex" in types
     # The same "(!)" marker now also flags a step whose endpoint could not be read
     # (makorele#78), and that step need not carry a deadline at all — without this the
@@ -292,7 +300,8 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
         ]
     if has_reference:
         lines.append(
-            "- `(i) …` (Notiz) — Frist als Verweis auf eine Tabelle / ein SD / den Rahmenvertrag oder mit Bedingung"
+            "- `(i) …` (Notiz) — Frist im Klartext: Verweis auf eine Tabelle / ein SD / den "
+            "Rahmenvertrag, eine Bedingung, oder das Ereignis, auf das sich `{u}` bezieht"
         )
     if has_complex:
         lines.append("- `(!) … [REVIEW]` (Notiz) — komplexe Frist, noch nicht strukturiert geparst")

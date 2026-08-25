@@ -377,3 +377,40 @@ def test_mermaid_omits_the_annotations_of_a_parsed_subprocess_call() -> None:
     }
     lines = _render_sequence_diagram({"participants": ["NB", "MSB"], "steps": [step]})
     assert "    NB->>+MSB: 1. ref X" in lines
+
+
+def test_deadline_legend_defines_the_info_marker_a_lossy_unverzueglich_shows() -> None:
+    """A diagram can show `(i)` without carrying a single `reference` row (makorele#101).
+
+    Keying the entry on the type alone left 107 of the 228 shipped diagrams showing a marker the
+    legend does not define — the same failure the `(!)` entry's own comment records for
+    makorele#78.
+    """
+    sd = {
+        "participants": ["LF", "NB"],
+        "steps": [
+            {
+                "nr": 1,
+                "sender": "LF",
+                "receiver": "NB",
+                "message": "Foo",
+                "deadline_rule": {"type": "unverzüglich", "raw": "Unverzüglich nach Kenntnisnahme."},
+            }
+        ],
+    }
+    legend = _deadline_legend(sd)
+    assert any(line.startswith("- `(i) …`") for line in legend), legend
+    # and a row whose tag says everything still shows no `(i)` marker, so none is announced
+    sd_bare = {
+        "participants": ["LF", "NB"],
+        "steps": [
+            {
+                "nr": 1,
+                "sender": "LF",
+                "receiver": "NB",
+                "message": "Foo",
+                "deadline_rule": {"type": "unverzüglich", "raw": "Unverzüglich."},
+            }
+        ],
+    }
+    assert not any(line.startswith("- `(i) …`") for line in _deadline_legend(sd_bare))

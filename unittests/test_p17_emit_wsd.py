@@ -3,7 +3,12 @@ import logging
 import pytest
 
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
-from makoralle.serialization.wsd import _deadline_note, _deadline_tag, emit_wsd
+from makoralle.serialization.wsd import (
+    _deadline_note,
+    _deadline_tag,
+    _unverzueglich_sentence_beyond_the_tag,
+    emit_wsd,
+)
 from makoralle.webapp_export import extract_review_notes
 
 
@@ -25,9 +30,26 @@ def test_deadline_note_reference_is_info_without_review_flag() -> None:
 
 
 def test_deadline_note_terminiert_and_structured_get_no_note() -> None:
-    """Structured deadlines (tag-rendered) never produce a note."""
-    for t in ("terminiert", "unverzüglich", "parallel", "none"):
+    """A deadline its tag carries in full produces no note.
+
+    `unverzüglich` used to be unconditional here and no longer is: the type is in the list only
+    while its tag says everything the sentence does — a bare "Unverzüglich." or a row whose tag
+    carries a clock, working days or a step. Where the sentence says more, the note is the point
+    (makorele#101); `test_deadline_note_lossy_unverzueglich_gets_its_sentence` is that case.
+    """
+    for t in ("terminiert", "parallel", "none"):
         assert _deadline_note(_step_with_deadline(DeadlineRule(type=t, raw="x")), ["LF", "NB"]) is None
+    # the sentence is the marker word and nothing else, so `{u}` already says it
+    assert (
+        _deadline_note(_step_with_deadline(DeadlineRule(type="unverzüglich", raw="Unverzüglich.")), ["LF", "NB"])
+        is None
+    )
+    # the tag carries the bound, so the note would repeat the arrow — one case per disjunct of the
+    # guard, because a fixture setting two of them lets each hide the other
+    for kwargs in ({"business_days": 1}, {"latest_time": "15:00"}, {"reference_step": 2}):
+        structured = DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Nr. 2.", **kwargs)
+        assert _unverzueglich_sentence_beyond_the_tag(structured) == ""
+        assert _deadline_note(_step_with_deadline(structured), ["LF", "NB"]) is None
 
 
 def test_emit_flat() -> None:
@@ -1153,3 +1175,79 @@ def test_a_one_lane_span_puts_the_frist_where_the_step_is() -> None:
     lines = emit_wsd(sd).splitlines()
     assert "note over NB: (!) 1. Etwas — beide Endpunkte ungelesen  [REVIEW]" in lines
     assert "note over NB: (!) Frist: Frist X  [REVIEW]" in lines
+
+
+# --- A bare-tagged "unverzüglich" whose sentence says more (makorele#101) -----------------
+
+
+def test_deadline_note_lossy_unverzueglich_gets_its_sentence() -> None:
+    """`{u}` says "immediately" and drops the event the reader acts on.
+
+    "Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung." has an outer bound whose
+    anchor is prose, not a step. The compact tag cannot carry it — the corpus's anchors run to 63
+    characters — so the sentence goes beside the arrow instead, the way `reference` already does.
+    """
+    rule = DeadlineRule(type="unverzüglich", raw="Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung.")
+    note = _deadline_note(_step_with_deadline(rule), ["LF", "NB"])
+    assert note == ("note right of NB: (i) Frist: Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung.")
+    assert "[REVIEW]" not in note
+
+
+def test_deadline_note_lossy_unverzueglich_keeps_its_compact_tag() -> None:
+    """The tag is unchanged — this is "tag *and* note", not a replacement for the tag."""
+    rule = DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Kenntnisnahme.")
+    assert _deadline_tag(rule) == "{u}"
+    assert _deadline_note(_step_with_deadline(rule), ["LF", "NB"]) is not None
+
+
+def test_the_sentence_beyond_the_tag_is_empty_where_the_tag_says_everything() -> None:
+    """The predicate itself, on the shapes that decide it."""
+    beyond = _unverzueglich_sentence_beyond_the_tag
+
+    assert beyond(DeadlineRule(type="unverzüglich", raw="Unverzüglich.")) == ""
+    assert beyond(DeadlineRule(type="unverzüglich", raw="Sofort.")) == ""
+    # CONSTRUCTED: no corpus raw carries "!" or "?", but without them in the class the bare
+    # punctuation survives as a residual and earns a note that says nothing (Copilot).
+    assert beyond(DeadlineRule(type="unverzüglich", raw="Unverzüglich!")) == ""
+    assert beyond(DeadlineRule(type="unverzüglich", raw="Sofort?")) == ""
+    assert beyond(DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Kenntnisnahme.")) == "nach Kenntnisnahme"
+    # a structured tag already carries the bound
+    assert beyond(DeadlineRule(type="unverzüglich", business_days=1, raw="Unverzüglich, spätestens 1 WT.")) == ""
+    # and a type that is not unverzüglich is not this predicate's business
+    assert beyond(DeadlineRule(type="reference", raw="Gemäß Rahmenvertrag.")) == ""
+    # the marker is stripped only where the sentence opens with it: 48 corpus sentences carry it
+    # mid-prose, and stripping it there would leave a mangled residual
+    assert (
+        beyond(DeadlineRule(type="unverzüglich", raw="Bei Fall a: Unverzüglich nach X."))
+        == "Bei Fall a: Unverzüglich nach X"
+    )
+
+
+def test_a_dropped_lossy_unverzueglich_is_named_in_the_log(caplog: pytest.LogCaptureFixture) -> None:
+    """`_log_dropped` names the sentence it just lost, not only a `complex`/`reference` one.
+
+    Its rationale used to be that an `unverzüglich` rule "survives the drop as structure" — true
+    while `{u}` said everything, false for a row whose sentence carries the event (makorele#101).
+    Nothing in the v0.0.16 corpus reaches this path today (all 220 land `right of` a known lane),
+    so only a test can hold the claim.
+    """
+    lossy = SDStep(
+        nr=1,
+        sender="?",
+        receiver="?",
+        message="Eins",
+        deadline_rule=DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Kenntnisnahme."),
+    )
+    structured = SDStep(
+        nr=2,
+        sender="?",
+        receiver="?",
+        message="Zwei",
+        deadline_rule=DeadlineRule(type="unverzüglich", business_days=1, raw="Unverzüglich, spätestens 1 WT."),
+    )
+    with caplog.at_level(logging.WARNING, logger="makoralle.serialization.wsd"):
+        emit_wsd(SequenceDiagram(participants=["?"], steps=[lossy, structured]))
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("dropping step 1" in m and "Unverzüglich nach Kenntnisnahme." in m for m in messages), messages
+    # the tag still carries this one, so announcing a loss would announce one that did not happen
+    assert any(m == "dropping step 2 from the diagram: no endpoint and no lane is known" for m in messages), messages
