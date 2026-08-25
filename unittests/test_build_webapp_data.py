@@ -1127,3 +1127,64 @@ def test_a_process_without_pid_mappings_gets_an_empty_name_list() -> None:
     never has to distinguish "no names" from "field missing"."""
     entry = build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True)
     assert entry["pidNames"] == []
+
+
+def test_a_pid_whose_rows_disagree_is_searchable_under_every_spelling() -> None:
+    """The label takes the first row, because it has one line to live on. A search text is under no
+    such pressure, and dropping a spelling means whoever types it gets no hit at all. The real
+    instance: 19101 in `geschäftsdatenanfrage` reads "Ablehnung der Anfrage  Stammdaten" with a
+    double space on the row that wins, and the ordinary single space on its other two rows — and the
+    webapp neither collapses whitespace nor matches loosely."""
+    process = {
+        **SAMPLE,
+        "pid_mappings": [
+            {"prüfidentifikator": "55001", "anwendungsfall": "Ablehnung der Anfrage  Stammdaten"},
+            {"prüfidentifikator": "55001", "anwendungsfall": "Ablehnung der Anfrage Stammdaten"},
+        ],
+    }
+    entry = build_index_entry(process, has_bpmn=False, has_review=False, has_sequence=True)
+    assert entry["pidNames"] == ["Ablehnung der Anfrage  Stammdaten", "Ablehnung der Anfrage Stammdaten"]
+    # …while the detail row, which is a label, still shows exactly one of them.
+    detail = build_detail(process, review_notes=[])
+    assert {row["name"] for row in detail["pids"] if row["pid"] == 55001} == {"Ablehnung der Anfrage  Stammdaten"}
+
+
+def test_two_pids_sharing_an_anwendungsfall_are_named_once() -> None:
+    """The common case, not an edge: 405 named PIDs in v0.0.17 carry only 313 distinct names, and 23
+    processes reference several PIDs that share one — `abrechnungsdaten_bilanzkreisabrechnung` has
+    four rows reading "Abr.-Daten BK-Abr. verb. MaLo". Repeating them buys the search nothing and
+    grows a file that is committed to the dataset repo."""
+    entry = build_index_entry(
+        {
+            **SAMPLE,
+            "pid_mappings": [
+                {"prüfidentifikator": "55001", "anwendungsfall": "Abr.-Daten BK-Abr. verb. MaLo"},
+                {"prüfidentifikator": "55002", "anwendungsfall": "Abr.-Daten BK-Abr. verb. MaLo"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Abr.-Daten BK-Abr. verb. MaLo"]
+
+
+def test_the_names_are_sorted_not_left_in_row_order() -> None:
+    """Sortedness is load-bearing for a reason no reader sees: `processes.json` is committed to the
+    dataset repo, so an order that follows set iteration would churn the file on every regeneration
+    and bury the real diff. Four names, listed in an order that is not the alphabetical one."""
+    entry = build_index_entry(
+        {
+            **TWO_SD,
+            "pid_mappings": [
+                {"prüfidentifikator": "11001", "anwendungsfall": "Wechselanfrage"},
+                {"prüfidentifikator": "11002", "anwendungsfall": "Bestätigung"},
+                {"prüfidentifikator": "11003", "anwendungsfall": "Ablehnung"},
+                {"prüfidentifikator": "11003", "anwendungsfall": "Zustimmung"},
+            ],
+        },
+        has_bpmn=False,
+        has_review=False,
+        has_sequence=True,
+    )
+    assert entry["pidNames"] == ["Ablehnung", "Bestätigung", "Wechselanfrage", "Zustimmung"]

@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 import shutil
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -81,9 +81,11 @@ def build_index_entry(
     # the Anwendungsfall here too — that is what makorele#52 was asked for and mako_prozesse#167
     # is missing. Restricted to the PIDs the diagrams actually reference: `pid_mappings` is the
     # process's slice of the official list and can name one no step shows, which would make the
-    # process findable under a word its page never displays.
-    names = _pid_names(process.get("pid_mappings") or [])
-    all_pid_names = sorted({names[pid] for pid in all_pids if names.get(pid)})
+    # process findable under a word its page never displays. Distinct, because 23 processes
+    # reference several PIDs sharing one Anwendungsfall, and sorted, because this list is
+    # committed to the dataset repo and an unordered one would churn on every regeneration.
+    variants = _pid_name_variants(process.get("pid_mappings") or [])
+    all_pid_names = sorted({name for pid in all_pids for name in variants.get(pid, ())})
     participants = _ordered_union(d.get("participants") or [] for d in diagrams)
     return {
         "id": p.get("id") or "",
@@ -148,6 +150,18 @@ def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
     references PID 0.
     """
     names: dict[int, str] = {}
+    for number, name in _pid_name_rows(mappings):
+        names.setdefault(number, name)
+    return names
+
+
+def _pid_name_rows(mappings: list[dict[str, Any]]) -> Iterator[tuple[int, str]]:
+    """Every usable (Prüfidentifikator, Anwendungsfall) pair, in file order and undeduplicated.
+
+    Split out so the two callers can disagree about collisions: a label has one line to live on and
+    takes the first row (`_pid_names`), while a search text has no such constraint and takes them all
+    (`_pid_name_variants`).
+    """
     for row in mappings:
         raw = row.get("prüfidentifikator")
         name = (row.get("anwendungsfall") or "").strip()
@@ -161,8 +175,23 @@ def _pid_names(mappings: list[dict[str, Any]]) -> dict[int, str]:
             number = int(str(raw).strip())
         except ValueError:  # defensive: every value in v0.0.15 is an integer, but the column is text
             continue
-        names.setdefault(number, name)
-    return names
+        yield number, name
+
+
+def _pid_name_variants(mappings: list[dict[str, Any]]) -> dict[int, set[str]]:
+    """Prüfidentifikator -> *every* spelling its rows give the Anwendungsfall.
+
+    `_pid_names` resolves a PID whose rows disagree to the first row, because a label has one line
+    and joining two spellings would put text in it that no document contains. A search text is under
+    no such pressure, so it carries both: dropping one means a reader who types the losing spelling
+    gets no hit at all. That is not hypothetical — 19101 in `geschäftsdatenanfrage` reads "Ablehnung
+    der Anfrage␣␣Stammdaten" on the row that wins and the ordinary single space on its other two, and
+    the webapp's search neither collapses whitespace nor matches loosely.
+    """
+    variants: dict[int, set[str]] = {}
+    for number, name in _pid_name_rows(mappings):
+        variants.setdefault(number, set()).add(name)
+    return variants
 
 
 def _pid_table(steps: list[dict[str, Any]], names: dict[int, str] | None = None) -> list[dict[str, Any]]:
