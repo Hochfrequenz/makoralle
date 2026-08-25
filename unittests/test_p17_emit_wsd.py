@@ -1153,3 +1153,53 @@ def test_a_one_lane_span_puts_the_frist_where_the_step_is() -> None:
     lines = emit_wsd(sd).splitlines()
     assert "note over NB: (!) 1. Etwas — beide Endpunkte ungelesen  [REVIEW]" in lines
     assert "note over NB: (!) Frist: Frist X  [REVIEW]" in lines
+
+
+# --- A bounded "unverzüglich" whose bound is not a step (makorele#101) --------------------
+
+
+def test_deadline_tag_unverzueglich_prints_a_non_step_anchor() -> None:
+    """ "Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung." has an outer bound,
+    and it is not anchored on a step. Without the anchor the tag reads `{1WT}` — one working day
+    after *what* — which is the half of the sentence the reader needs (makorele#101).
+    """
+    rule = DeadlineRule(
+        type="unverzüglich",
+        business_days=1,
+        direction="nach",
+        anchor="Erhalt der Aktivierung",
+        raw="Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung.",
+    )
+    assert _deadline_tag(rule) == "{1WT nach Erhalt der Aktivierung}"
+
+
+def test_deadline_tag_unverzueglich_prefers_the_step_over_the_anchor() -> None:
+    """A step is the more precise anchor and keeps today's shape; the prose one is the fallback."""
+    rule = DeadlineRule(
+        type="unverzüglich",
+        business_days=1,
+        reference_event="ÜZ",
+        reference_step=5,
+        direction="nach",
+        anchor="Erhalt der Aktivierung",
+        raw="...",
+    )
+    assert _deadline_tag(rule) == "{1WT ÜZ#5}"
+
+
+def test_deadline_tag_unverzueglich_refuses_an_anchor_without_a_direction() -> None:
+    """`{1WT Erhalt der Aktivierung}` would not say whether the day runs before or after it.
+
+    `_terminiert_core` does print an undirected anchor, and deliberately: it always leads with
+    `≤`, which already says "by". This tag has no `≤`, so the direction is what carries it, and
+    without one the bound is stated more precisely than it is known. Every anchor the corpus
+    yields for this shape has one, so nothing is lost by refusing.
+    """
+    rule = DeadlineRule(type="unverzüglich", business_days=1, anchor="Erhalt der Aktivierung", raw="...")
+    assert _deadline_tag(rule) == "{1WT}"
+
+
+def test_deadline_tag_unverzueglich_anchor_without_a_bound_stays_bare() -> None:
+    """An anchor with nothing to bound is not a deadline: "unverzüglich nach X" is still `{u}`."""
+    rule = DeadlineRule(type="unverzüglich", direction="nach", anchor="Erhalt der Aktivierung", raw="...")
+    assert _deadline_tag(rule) == "{u}"

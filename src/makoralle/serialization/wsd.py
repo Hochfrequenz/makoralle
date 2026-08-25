@@ -48,6 +48,18 @@ def _deadline_tag(rule: DeadlineRule | None) -> str:
         if rule.reference_step:
             evt = rule.reference_event or ""
             parts.append(f"{evt}#{rule.reference_step}")
+        elif rule.business_days is not None and rule.direction and rule.anchor:
+            # The bound is real but hangs off prose rather than a step: "Unverzüglich, spätestens
+            # jedoch 1 WT nach Erhalt der Aktivierung." Without this the tag reads "{1WT}" — one
+            # working day after *what* — and the half of the sentence carrying the event is lost
+            # (makorele#101). A step is the more precise anchor, so it still wins above.
+            #
+            # The direction is required, unlike in `_terminiert_core`, and that difference is
+            # deliberate: that tag always leads with `≤`, which already says "by". This one has
+            # no `≤`, so "nach"/"vor" is what carries it, and "{1WT Erhalt der Aktivierung}" would
+            # state the bound more precisely than it is known. Every anchor the corpus yields for
+            # this shape has a direction, so refusing costs nothing.
+            parts.append(f"{rule.direction} {rule.anchor}")
         return "{" + " ".join(parts) + "}" if parts else "{u}"
     if rule.type == "terminiert":
         return "{" + _terminiert_core(rule) + "}"
