@@ -201,3 +201,77 @@ def test_recurrence_is_optional_so_older_datasets_still_parse() -> None:
     # and the new field survives a round trip
     new = DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")
     assert DeadlineRule.model_validate(new.model_dump()).recurrence == "werktäglich"
+
+
+def test_pid_mapping_sparte_is_absent_by_default() -> None:
+    """The three new fields are optional, so a tree parsed before makoralle#55 still loads
+    and every existing caller keeps working."""
+    # pylint: disable=non-ascii-name
+    pid = PIDMapping(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001)
+    assert pid.prozessbeschreibung_dokument is None
+    assert (pid.sparte_strom, pid.sparte_gas) == (None, None)
+    # Empty, NOT {"Strom","Gas"} and not an error: the row makes no sparte claim.
+    assert pid.sparten == frozenset()
+
+
+def test_pid_mapping_sparten_reads_the_markers() -> None:
+    # pylint: disable=non-ascii-name
+    gas = PIDMapping(
+        lfd_nr=170,
+        ahb="UTILMD AHB Gas",
+        anwendungsfall="Anmeldung NN",
+        prüfidentifikator=44001,
+        prozessbeschreibung_dokument="GeLi Gas 2.0",
+        sparte_strom=False,
+        sparte_gas=True,
+    )
+    assert gas.sparten == frozenset({"Gas"})
+    # frozenset, not set: `set(...) == frozenset(...)` in Python, so without this the
+    # annotation would be decoration and a caller caching a scope could not hash it.
+    assert isinstance(gas.sparten, frozenset)
+    both = gas.model_copy(update={"sparte_strom": True})
+    # A row CAN be dual-sparte, which is why this is not a single enum.
+    assert both.sparten == frozenset({"Strom", "Gas"})
+    # Explicitly unset is still "no claim", so a caller cannot tell it from a missing
+    # column — and must therefore treat both as unscoped rather than as "neither".
+    neither = gas.model_copy(update={"sparte_gas": False})
+    assert neither.sparten == frozenset()
+
+
+def test_pid_mapping_sparte_recorded_separates_absent_from_unmarked() -> None:
+    """The distinction `sparten` deliberately collapses. A scoping rule needs it to tell
+    "this workbook layout had no Sparte columns" from "it had them and marked neither",
+    because only the first means it must not scope at all."""
+    # pylint: disable=non-ascii-name
+    absent = PIDMapping(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001)
+    unmarked = absent.model_copy(update={"sparte_strom": False, "sparte_gas": False})
+    assert absent.sparte_recorded is False
+    assert unmarked.sparte_recorded is True
+    # The shape that decides the operator: one column mapped, the other not. `and` here
+    # would be wrong, and without this case the suite is green either way — a parser that
+    # writes only the column it found must still count as having recorded something.
+    half = absent.model_copy(update={"sparte_strom": True})
+    assert half.sparte_recorded is True
+    # Both still yield "no claim" through the usable view.
+    assert absent.sparten == frozenset()
+    assert unmarked.sparten == frozenset()
+
+
+def test_pid_mapping_serialization_is_unchanged_for_rows_without_sparte() -> None:
+    """The compatibility argument for this change, pinned.
+
+    `serialization/process_yaml.py` dumps rows with `exclude_none=True`, so the three new
+    fields add nothing to the ~905 serialized PID rows the parser does not populate — the
+    next regeneration shows no diff from them. Without this test an `exclude_none`
+    regression would quietly add three null keys to every row in the dataset.
+
+    Also pins that the derived views stay out of the dump: `sparten` is a frozenset, which
+    would serialize as a python-object tag rather than as YAML data.
+    """
+    # pylint: disable=non-ascii-name
+    dumped = PIDMapping(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001).model_dump(
+        exclude_none=True
+    )
+    assert "prozessbeschreibung_dokument" not in dumped
+    assert "sparte_strom" not in dumped and "sparte_gas" not in dumped
+    assert "sparten" not in dumped and "sparte_recorded" not in dumped
