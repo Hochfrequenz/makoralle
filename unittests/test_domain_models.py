@@ -208,7 +208,7 @@ def test_pid_mapping_sparte_is_absent_by_default() -> None:
     and every existing caller keeps working."""
     # pylint: disable=non-ascii-name
     pid = PIDMapping(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001)
-    assert pid.prozessbeschreibung is None
+    assert pid.prozessbeschreibung_dokument is None
     assert (pid.sparte_strom, pid.sparte_gas) == (None, None)
     # Empty, NOT {"Strom","Gas"} and not an error: the row makes no sparte claim.
     assert pid.sparten == frozenset()
@@ -221,11 +221,14 @@ def test_pid_mapping_sparten_reads_the_markers() -> None:
         ahb="UTILMD AHB Gas",
         anwendungsfall="Anmeldung NN",
         prüfidentifikator=44001,
-        prozessbeschreibung="GeLi Gas 2.0",
+        prozessbeschreibung_dokument="GeLi Gas 2.0",
         sparte_strom=False,
         sparte_gas=True,
     )
     assert gas.sparten == frozenset({"Gas"})
+    # frozenset, not set: `set(...) == frozenset(...)` in Python, so without this the
+    # annotation would be decoration and a caller caching a scope could not hash it.
+    assert isinstance(gas.sparten, frozenset)
     both = gas.model_copy(update={"sparte_strom": True})
     # A row CAN be dual-sparte, which is why this is not a single enum.
     assert both.sparten == frozenset({"Strom", "Gas"})
@@ -233,3 +236,35 @@ def test_pid_mapping_sparten_reads_the_markers() -> None:
     # column — and must therefore treat both as unscoped rather than as "neither".
     neither = gas.model_copy(update={"sparte_gas": False})
     assert neither.sparten == frozenset()
+
+
+def test_pid_mapping_sparte_recorded_separates_absent_from_unmarked() -> None:
+    """The distinction `sparten` deliberately collapses. A scoping rule needs it to tell
+    "this workbook layout had no Sparte columns" from "it had them and marked neither",
+    because only the first means it must not scope at all."""
+    # pylint: disable=non-ascii-name
+    base = dict(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001)
+    assert PIDMapping(**base).sparte_recorded is False
+    assert PIDMapping(**base, sparte_strom=False, sparte_gas=False).sparte_recorded is True
+    # Both still yield "no claim" through the usable view.
+    assert PIDMapping(**base, sparte_strom=False, sparte_gas=False).sparten == frozenset()
+
+
+def test_pid_mapping_serialization_is_unchanged_for_rows_without_sparte() -> None:
+    """The compatibility argument for this change, pinned.
+
+    `serialization/process_yaml.py` dumps rows with `exclude_none=True`, so the three new
+    fields add nothing to the ~905 serialized PID rows the parser does not populate — the
+    next regeneration shows no diff from them. Without this test an `exclude_none`
+    regression would quietly add three null keys to every row in the dataset.
+
+    Also pins that the derived views stay out of the dump: `sparten` is a frozenset, which
+    would serialize as a python-object tag rather than as YAML data.
+    """
+    # pylint: disable=non-ascii-name
+    dumped = PIDMapping(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001).model_dump(
+        exclude_none=True
+    )
+    assert "prozessbeschreibung_dokument" not in dumped
+    assert "sparte_strom" not in dumped and "sparte_gas" not in dumped
+    assert "sparten" not in dumped and "sparte_recorded" not in dumped
