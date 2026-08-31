@@ -201,3 +201,35 @@ def test_recurrence_is_optional_so_older_datasets_still_parse() -> None:
     # and the new field survives a round trip
     new = DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")
     assert DeadlineRule.model_validate(new.model_dump()).recurrence == "werktäglich"
+
+
+def test_pid_mapping_sparte_is_absent_by_default() -> None:
+    """The three new fields are optional, so a tree parsed before makoralle#55 still loads
+    and every existing caller keeps working."""
+    # pylint: disable=non-ascii-name
+    pid = PIDMapping(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001)
+    assert pid.prozessbeschreibung is None
+    assert (pid.sparte_strom, pid.sparte_gas) == (None, None)
+    # Empty, NOT {"Strom","Gas"} and not an error: the row makes no sparte claim.
+    assert pid.sparten == frozenset()
+
+
+def test_pid_mapping_sparten_reads_the_markers() -> None:
+    # pylint: disable=non-ascii-name
+    gas = PIDMapping(
+        lfd_nr=170,
+        ahb="UTILMD AHB Gas",
+        anwendungsfall="Anmeldung NN",
+        prüfidentifikator=44001,
+        prozessbeschreibung="GeLi Gas 2.0",
+        sparte_strom=False,
+        sparte_gas=True,
+    )
+    assert gas.sparten == frozenset({"Gas"})
+    both = gas.model_copy(update={"sparte_strom": True})
+    # A row CAN be dual-sparte, which is why this is not a single enum.
+    assert both.sparten == frozenset({"Strom", "Gas"})
+    # Explicitly unset is still "no claim", so a caller cannot tell it from a missing
+    # column — and must therefore treat both as unscoped rather than as "neither".
+    neither = gas.model_copy(update={"sparte_gas": False})
+    assert neither.sparten == frozenset()
