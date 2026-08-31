@@ -243,11 +243,13 @@ def test_pid_mapping_sparte_recorded_separates_absent_from_unmarked() -> None:
     "this workbook layout had no Sparte columns" from "it had them and marked neither",
     because only the first means it must not scope at all."""
     # pylint: disable=non-ascii-name
-    base = dict(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001)
-    assert PIDMapping(**base).sparte_recorded is False
-    assert PIDMapping(**base, sparte_strom=False, sparte_gas=False).sparte_recorded is True
+    absent = PIDMapping(lfd_nr=1, ahb="UTILMD AHB Strom", anwendungsfall="x", prüfidentifikator=55001)
+    unmarked = absent.model_copy(update={"sparte_strom": False, "sparte_gas": False})
+    assert absent.sparte_recorded is False
+    assert unmarked.sparte_recorded is True
     # Both still yield "no claim" through the usable view.
-    assert PIDMapping(**base, sparte_strom=False, sparte_gas=False).sparten == frozenset()
+    assert absent.sparten == frozenset()
+    assert unmarked.sparten == frozenset()
 
 
 def test_pid_mapping_serialization_is_unchanged_for_rows_without_sparte() -> None:
