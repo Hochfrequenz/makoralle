@@ -247,6 +247,11 @@ def test_pid_mapping_sparte_recorded_separates_absent_from_unmarked() -> None:
     unmarked = absent.model_copy(update={"sparte_strom": False, "sparte_gas": False})
     assert absent.sparte_recorded is False
     assert unmarked.sparte_recorded is True
+    # The shape that decides the operator: one column mapped, the other not. `and` here
+    # would be wrong, and without this case the suite is green either way — a parser that
+    # writes only the column it found must still count as having recorded something.
+    half = absent.model_copy(update={"sparte_strom": True})
+    assert half.sparte_recorded is True
     # Both still yield "no claim" through the usable view.
     assert absent.sparten == frozenset()
     assert unmarked.sparten == frozenset()
