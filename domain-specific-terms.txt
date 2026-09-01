@@ -2,7 +2,8 @@
 # German MaKo domain terms / identifiers that codespell mistakes for English typos
 aktion
 als
-frist
-oder
 crossreference
+frist
+ist
+oder
 vor

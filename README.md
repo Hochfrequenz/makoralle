@@ -49,8 +49,28 @@ yaml_text = emit_yaml(process)
 wsd_text = emit_wsd(process.sequence_diagrams[0])
 ```
 
-The models live under `makoralle.models` (`process`, `ebd`, `pid`, `activity`, `chunk`)
-and the serializers under `makoralle.serialization`.
+The models live under `makoralle.models` (`process`, `ebd`, `pid`, `activity`, `chunk`,
+`deadline`) and the serializers under `makoralle.serialization`.
+
+### Deadlines
+
+A step's Frist is available in two shapes. `DeadlineRule` (in `models.process`) is the
+flat one the parser writes today. `Deadline` (in `models.deadline`) is the structured one:
+a list of alternatives, each with its own condition, immediacy anchor and backstop, which
+is what the prose actually says — a MaKo Frist routinely states *act without undue delay*
+**and** *no later than X*, and the flat rule has one field set for both.
+
+```python
+from makoralle.models.deadline import Deadline, deadline_from_rule
+
+deadline = deadline_from_rule(step.deadline_rule)   # None when there is no Frist
+if deadline and deadline.states_a_backstop:
+    ...
+```
+
+The lift is faithful, not complete: it recovers everything the flat rule holds, and cannot
+invent what it never held — a condition, a second alternative, or an offset in Stunden.
+`raw` remains the full record until the parser fills the structure (see #57).
 
 ## Development
 

@@ -1,0 +1,119 @@
+[
+  {
+    "_where": "abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb/abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb nr 1",
+    "type": "complex",
+    "recurring": false,
+    "raw": "Abmeldung zum Beginn eines Monats mit einer Frist von einem Monat in die Zukunft möglich."
+  },
+  {
+    "_where": "abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone/abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone nr 3",
+    "type": "none",
+    "recurring": false,
+    "raw": "--"
+  },
+  {
+    "_where": "beendigung_einer_konfiguration_vom_msb/beendigung_einer_konfiguration_vom_msb nr 3",
+    "type": "parallel",
+    "recurring": false,
+    "raw": "Parallel zu Nr. 1 oder 2."
+  },
+  {
+    "_where": "beginn_messstellenbetrieb/beginn_messstellenbetrieb nr 3",
+    "type": "parallel",
+    "reference_step": 2,
+    "recurring": false,
+    "raw": "Parallel zu Nr. 2."
+  },
+  {
+    "_where": "abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone/abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone nr 2",
+    "type": "reference",
+    "recurring": false,
+    "raw": "1 WT nach Abbestellung der Aggregationsebene RZ."
+  },
+  {
+    "_where": "abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone/abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone nr 1",
+    "type": "terminiert",
+    "business_days": 2,
+    "direction": "vor",
+    "anchor": "Bilanzierungsmonat",
+    "recurring": false,
+    "raw": "Spätestens 2 WT vor dem Bilanzierungsmonat."
+  },
+  {
+    "_where": "abrechnung_messstellenbetrieb_gegenüber_dem_lf/abrechnung_messstellenbetrieb_gegenüber_dem_lf nr 2",
+    "type": "terminiert",
+    "reference_event": "ÜT",
+    "anchor": "Zahlungsziel",
+    "recurring": false,
+    "raw": "Spätester ÜT ist zum Zahlungsziel in der Rechnung."
+  },
+  {
+    "_where": "beginn_messstellenbetrieb/beginn_messstellenbetrieb nr 16",
+    "type": "terminiert",
+    "business_days": 11,
+    "reference_step": 2,
+    "reference_event": "ÜT",
+    "direction": "nach",
+    "anchor": "Zuordnungsbeginn",
+    "recurring": false,
+    "raw": "Spätester ÜT ist der 11. WT nach dem in Nr. 2 vom NB bestätigten Zuordnungsbeginn."
+  },
+  {
+    "_where": "messlokationsänderung_vom_lf_an_msb/messlokationsänderung_vom_lf_an_msb nr 1",
+    "type": "terminiert",
+    "business_days": 20,
+    "reference_event": "ÜT",
+    "direction": "vor",
+    "anchor": "Änderungstermin",
+    "recurring": false,
+    "raw": "Spätester ÜT ist der 20. WT vor dem gewünschten Änderungstermin."
+  },
+  {
+    "_where": "übermittlung_der_täglichen_ausfallarbeitsüberführungszeitreihe/ nr 1",
+    "type": "terminiert",
+    "latest_time": "14:00",
+    "recurring": true,
+    "recurrence": "täglich",
+    "raw": "täglich für den Vortag bis spätestens 14 Uhr."
+  },
+  {
+    "_where": "abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb/abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb nr 2",
+    "type": "unverzüglich",
+    "recurring": false,
+    "raw": "Unverzüglich, jedoch spätestens bis zum Ablauf des 3. WT nach Eingang der Abmeldung aus Modell 2."
+  },
+  {
+    "_where": "abrechnung_einer_für_den_esa_erbrachten_leistung/abrechnung_einer_für_den_esa_erbrachten_leistung nr 2",
+    "type": "unverzüglich",
+    "reference_step": 1,
+    "reference_event": "ÜZ",
+    "recurring": false,
+    "raw": "Unverzüglich nach dem ÜZ von Nr. 1, jedoch spätester ÜT ist der 4. WT vor dem Zahlungsziel in der Rechnung."
+  },
+  {
+    "_where": "abrechnungsdaten_bilanzkreisabrechnung/abrechnungsdaten_bilanzkreisabrechnung nr 2",
+    "type": "unverzüglich",
+    "business_days": 2,
+    "reference_step": 1,
+    "reference_event": "ÜT",
+    "recurring": false,
+    "raw": "Unverzüglich, jedoch spätester ÜT ist der 2. WT nach dem ÜT von Nr. 1."
+  },
+  {
+    "_where": "lieferbeginn/lieferbeginn nr 2",
+    "type": "unverzüglich",
+    "latest_time": "07:00",
+    "business_days": 1,
+    "reference_step": 1,
+    "reference_event": "ÜT",
+    "recurring": false,
+    "raw": "Unverzüglich, jedoch spätester ÜZ ist 07:00 Uhr des 1. WT nach dem ÜT von Nr. 1."
+  },
+  {
+    "_where": "verpflichtung_gmsb/verpflichtung_gmsb nr 4",
+    "type": "unverzüglich",
+    "reference_step": 3,
+    "recurring": false,
+    "raw": "Unmittelbar nach Nr. 3."
+  }
+]
