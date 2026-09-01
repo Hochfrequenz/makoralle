@@ -9,27 +9,37 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import yaml
 
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.ref_links import build_ref_map, load_ref_overrides, resolve_ref
+from makoralle.review import ReviewItem, is_actionable, review_items
+from makoralle.serialization.makrake import canonical_json, makrake_diagram
 
 
-def sd_source_hash(wsd_text: str) -> str:
-    """SHA-256 of the normalized .wsd source — the identity an approval is tied to.
+def sd_source_hash(source_text: str) -> str:
+    """SHA-256 of a diagram's canonical source — the identity an approval is tied to.
 
-    Normalizes line endings to LF and strips surrounding whitespace so cosmetic
-    churn doesn't invalidate an approval, while any change to a step, label,
-    deadline, or participant does. The approve command reuses this so the
-    stamped hash and the build-time check can never disagree.
+    ``source_text`` is the canonical makrake render input
+    (:func:`~makoralle.serialization.makrake.canonical_json`). It used to be the ``.wsd``
+    DSL, which was the wrong subject twice over: the DSL dropped facts the diagram states
+    (a resolved subprocess reference has no slot in it), so a change to one could not
+    invalidate an approval; and it carried rendering directives (``# style:``) that could,
+    even though a reader would see no difference.
+
+    Still hashed as text rather than over the object, because the approve command must be
+    able to recompute it from what the build wrote without reimplementing the serializer —
+    that is what keeps the stamped hash and the build-time check from ever disagreeing.
+    Line endings are normalized and surrounding whitespace stripped so cosmetic churn does
+    not clear a badge, while any change to a step, label, deadline, participant or resolved
+    ref target does.
     """
-    normalized = wsd_text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    normalized = source_text.replace("\r\n", "\n").replace("\r", "\n").strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
@@ -220,8 +230,17 @@ def _distinct_pids(steps: list[dict[str, Any]]) -> list[int]:
     return sorted(pids)
 
 
-def build_detail(process: dict[str, Any], *, review_notes: list[str]) -> dict[str, Any]:
-    """Build the full per-process detail record (``processes/<id>.json``)."""
+def build_detail(
+    process: dict[str, Any], *, review_notes: list[str], review: list[ReviewItem] | None = None
+) -> dict[str, Any]:
+    """Build the full per-process detail record (``processes/<id>.json``).
+
+    ``review`` is the structured worklist (:mod:`makoralle.review`); ``review_notes`` is
+    the same list flattened to its prose, kept because the webapp still reads that field.
+    Both are passed in rather than computed here for the reason the whole module works this
+    way: an item's severity depends on a resolved subprocess ref, and resolution needs
+    every process in scope.
+    """
     p = process.get("process") or {}
     pid_names = _pid_names(process.get("pid_mappings") or [])
     pid = p.get("id") or ""
@@ -266,6 +285,9 @@ def build_detail(process: dict[str, Any], *, review_notes: list[str]) -> dict[st
         "pids": _pid_table(primary_steps, pid_names),
         "diagrams": diagrams,
         "reviewNotes": review_notes or [],
+        # The same worklist with its severity, kind and step intact. `reviewNotes` above is
+        # this list's prose, and goes when the webapp reads `reviewItems` instead.
+        "reviewItems": [i.model_dump(mode="json") for i in (review or [])],
         # Per-diagram approval (and this primary-mirroring detail.approval) is
         # attached by run(); build_detail emits the field as None so the dict shape
         # is stable for callers/tests that build a detail without the filesystem.
@@ -281,116 +303,122 @@ def load_approvals(approvals_file: Path | None) -> dict[str, Any]:
     return data.get("approvals") or {}
 
 
-def approval_for(wsd_text: str | None, entry: dict[str, Any] | None) -> dict[str, Any] | None:
-    """The webapp-facing approval ({by, at, note}) iff `entry` was stamped against
-    the *current* .wsd; None otherwise (no entry, no source, or stale hash)."""
-    if not entry or wsd_text is None:
+def approval_for(source_text: str | None, entry: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The webapp-facing approval ({by, at, note}) iff `entry` was stamped against the
+    diagram's *current* canonical source; None otherwise (no entry, no source, stale hash)."""
+    if not entry or source_text is None:
         return None
-    if entry.get("sha256") != sd_source_hash(wsd_text):
+    if entry.get("sha256") != sd_source_hash(source_text):
         return None
     return {"by": entry.get("approved_by") or "", "at": entry.get("approved_at") or "", "note": entry.get("note") or ""}
 
 
-_REVIEW_RE = re.compile(r"note\b.*?:\s*(.*?)\s*\[REVIEW\]\s*$")
+class ResolvedProcess(NamedTuple):
+    """A process with its subprocess refs resolved and its artifact keys computed.
 
-
-def extract_review_notes(wsd_text: str) -> list[str]:
-    """Extract the ``[REVIEW]`` note texts embedded in a .wsd source, in order."""
-    notes = []
-    for line in wsd_text.splitlines():
-        m = _REVIEW_RE.match(line.strip())
-        if m:
-            notes.append(m.group(1).strip())
-    return notes
-
-
-def _attr(tag: str, name: str) -> str | None:
-    m = re.search(rf'\b{name}="([^"]*)"', tag)
-    return m.group(1) if m else None
-
-
-def extract_sd_overlay(  # pylint: disable=too-many-locals,too-many-branches,invalid-name
-    html_text: str,
-) -> dict[str, Any] | None:
-    """Extract the interactive overlay model from a rendered sequence-diagram .html viewer.
-
-    Returns a dict with the SVG viewBox size, the PID hit-rects (coords + data-nr +
-    data-pids, in SVG coordinate space), deadline-ref tags, the per-step deadline
-    tooltip JSON, and the AHB base URL — everything a native React overlay needs to
-    reproduce the viewer's interactivity over the static .svg. Returns None if the
-    viewer carries no interactive overlays.
+    Resolution has to see every process at once — a ``ref`` names another process's SD,
+    which may sort later — so it cannot be done per process as the exporter walks them.
+    Both :func:`run` and :func:`export_makrake_inputs` need the resolved form, and doing it
+    twice risks the two disagreeing about a target, which is precisely the kind of drift
+    that leaves a link pointing somewhere the diagram does not.
     """
-    vb = re.search(r'<svg[^>]*\bviewBox="([\d.\s-]+)"', html_text)
-    if not vb:
-        return None
-    parts = vb.group(1).split()
-    if len(parts) != 4:
-        return None
-    w, h = float(parts[2]), float(parts[3])
 
-    # A single overlay rect often carries several classes
-    # (e.g. "dl-box pid-hit dl-ref"). Classify each rect ONCE so the React overlay
-    # has one element per region: a pid-hit rect owns click + deadline-hover and,
-    # if it also references a step, the ref-highlight; only rects that are *purely*
-    # dl-ref become standalone refs. (Emitting a combined rect into both lists would
-    # make the second overlay element swallow the first's pointer events.)
-    pids: list[dict[str, Any]] = []
-    refs: list[dict[str, Any]] = []
-    ref_links: list[dict[str, Any]] = []
-    for tag in re.findall(r'<rect class="[^"]*\b(?:pid-hit|dl-ref|ref-hit)\b[^"]*"[^>]*>', html_text):
-        cls = _attr(tag, "class") or ""
-        box = {
-            "x": float(_attr(tag, "x") or 0),
-            "y": float(_attr(tag, "y") or 0),
-            "w": float(_attr(tag, "width") or 0),
-            "h": float(_attr(tag, "height") or 0),
-        }
-        if "pid-hit" in cls.split():
-            nr = _attr(tag, "data-nr")
-            if nr is None:
-                continue
-            pid_list = [int(p) for p in (_attr(tag, "data-pids") or "").split(",") if p.strip().isdigit()]
-            hit = {"nr": int(nr), "pids": pid_list, **box}
-            refnr = _attr(tag, "data-refnr")
-            if refnr is not None and refnr.isdigit():
-                hit["refnr"] = int(refnr)
-            pids.append(hit)
-        elif "dl-ref" in cls.split():
-            rn = _attr(tag, "data-refnr")
-            if rn is None:
-                continue
-            refs.append({"refnr": int(rn), **box})
-        # ref-hit is handled INDEPENDENTLY of the pid/dl classification above: a
-        # subprocess-ref step's rect may ALSO be a pid-hit, in which case it must
-        # appear in BOTH `pids` (above) and `refLinks` (here).
-        if "ref-hit" in cls.split():
-            nr = _attr(tag, "data-nr")
-            if nr is not None and nr.isdigit():
-                uc = _attr(tag, "data-ref-uc")
-                sd = _attr(tag, "data-ref-sd")
-                ref_links.append({"nr": int(nr), "uc": uc or "", "sd": sd or "", **box})
+    pid: str
+    process: dict[str, Any]
+    #: One entry per SD variant, with ``ref_target`` filled in on every ``subprocess_ref``
+    #: step. These are the process's own step dicts, mutated in place, so anything reading
+    #: ``process`` afterwards sees the resolved targets too.
+    diagrams: list[dict[str, Any]]
+    #: Artifact key per diagram, positionally aligned with :attr:`diagrams`.
+    keys: list[str]
 
-    deadlines: dict[str, Any] = {}
-    dm = re.search(r'<script[^>]*id="deadline-data"[^>]*>(.*?)</script>', html_text, re.S)
-    if dm:
-        try:
-            deadlines = json.loads(dm.group(1))
-        except ValueError:
-            deadlines = {}
+    def payload(self, index: int) -> dict[str, Any]:
+        """The makrake render input for ``diagrams[index]``."""
+        diagram = self.diagrams[index]
+        name = (self.process.get("process") or {}).get("name") or self.pid
+        title = f"{name} — {diagram['name']}" if diagram.get("name") else name
+        return makrake_diagram(diagram, diagram_id=self.keys[index], name=title)
 
-    if not pids and not refs and not deadlines and not ref_links:
-        return None
 
-    ahb = re.search(r'const PRE = "([^"]*)"', html_text)
-    return {
-        "w": w,
-        "h": h,
-        "ahbBase": ahb.group(1) if ahb else "",
-        "pids": pids,
-        "refs": refs,
-        "deadlines": deadlines,
-        "refLinks": ref_links,
-    }
+def load_resolved(output_dir: Path, ref_links_file: Path | None = None) -> tuple[list[ResolvedProcess], set[str]]:
+    """Every process in ``output_dir/yaml``, refs resolved. Also the refs that did not.
+
+    An unresolved ref stays ``None`` rather than becoming a fuzzy guess: a box with no link
+    is honest, a box linking to the wrong process is not. Curate those in
+    ``sd_ref_links.yaml``.
+    """
+    loaded: list[tuple[str, dict[str, Any]]] = []
+    for yfile in sorted((output_dir / "yaml").glob("*.yaml")):
+        process = yaml.safe_load(yfile.read_text("utf-8"))
+        if not process:
+            print(f"skipping empty YAML: {yfile.name}")
+            continue
+        loaded.append(((process.get("process") or {}).get("id") or yfile.stem, process))
+
+    ref_overrides = load_ref_overrides(ref_links_file)
+    ref_map = build_ref_map(
+        {"id": pid, "name": (p.get("process") or {}).get("name") or "", "diagrams": _diagrams_source(p)}
+        for pid, p in loaded
+    )
+
+    resolved: list[ResolvedProcess] = []
+    unresolved: set[str] = set()
+    for pid, process in loaded:
+        diagrams = _diagrams_source(process)
+        for diagram in diagrams:
+            for step in diagram.get("steps") or []:
+                ref = step.get("subprocess_ref")
+                if not ref:
+                    continue
+                step["ref_target"] = resolve_ref(ref, ref_map, ref_overrides)
+                if step["ref_target"] is None:
+                    unresolved.add(ref)
+        keys = [sd_artifact_key(pid, d.get("slug", ""), len(diagrams)) for d in diagrams]
+        resolved.append(ResolvedProcess(pid=pid, process=process, diagrams=diagrams, keys=keys))
+    return resolved, unresolved
+
+
+def diagram_source_text(output_dir: Path, key: str, ref_links_file: Path | None = None) -> str | None:
+    """The canonical source text of one diagram, by artifact key — or ``None`` if unknown.
+
+    What :func:`sd_source_hash` is taken over, exposed because stamping an approval and
+    checking one at build time must never disagree: the approve command asks for the text
+    rather than rebuilding it, so there is one serializer and one resolution pass behind
+    both. That is also why it takes ``ref_links_file`` — a diagram's canonical form
+    includes its resolved ref targets, so an approval stamped without the overrides loaded
+    would be stale the moment the build applied them.
+    """
+    resolved, _ = load_resolved(output_dir, ref_links_file)
+    for entry in resolved:
+        for i, entry_key in enumerate(entry.keys):
+            if entry_key == key:
+                return canonical_json(entry.payload(i))
+    return None
+
+
+def export_makrake_inputs(*, output_dir: Path, dest: Path, ref_links_file: Path | None = None) -> int:
+    """Write one ``<artifact key>.json`` render input per diagram into ``dest``.
+
+    This is what replaced ``output/sequence/*.wsd``, and unlike the ``.wsd`` it is **not**
+    a committed artifact: it is fully derivable from ``output/yaml`` plus
+    ``sd_ref_links.yaml``, and the ``.wsd`` was only ever committed because the render was
+    a call to a third-party API and the approval hash was taken over the file. Neither is
+    true now, so the pipeline writes these into a scratch directory, renders them, and
+    throws them away — one less generated tree to drift.
+
+    Returns the number of diagrams written.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    resolved, unresolved = load_resolved(output_dir, ref_links_file)
+    written = 0
+    for entry in resolved:
+        for i, key in enumerate(entry.keys):
+            (dest / f"{key}.json").write_text(canonical_json(entry.payload(i)) + "\n", "utf-8")
+            written += 1
+    print(f"wrote {written} makrake render inputs → {dest}")
+    if unresolved:
+        print(f"unresolved refs: {len(unresolved)} (add to sd_ref_links.yaml)")
+    return written
 
 
 def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -402,8 +430,7 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     ``src/data`` JSON plus ``public/diagrams`` SVGs into ``webapp_dir``. Returns the
     number of processes written.
     """
-    yaml_dir = output_dir / "yaml"
-    seq_svg, bpmn_svg, wsd_dir = (output_dir / "sequence_svg", output_dir / "bpmn", output_dir / "sequence")
+    seq_svg, bpmn_svg = (output_dir / "sequence_svg", output_dir / "bpmn")
     data_dir = webapp_dir / "src" / "data"
     detail_dir = data_dir / "processes"
     dest_seq = webapp_dir / "public" / "diagrams" / "sequence"
@@ -426,43 +453,11 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     claimed_ads: dict[str, str] = {}
     contested_ads: list[str] = []
 
-    # Load every process up front so the subprocess-ref resolver sees ALL SD
-    # variants (a ref names another process's SD, which may sort later).
-    loaded: list[tuple[str, dict[str, Any]]] = []
-    for yfile in sorted(yaml_dir.glob("*.yaml")):
-        process = yaml.safe_load(yfile.read_text("utf-8"))
-        if not process:
-            print(f"skipping empty YAML: {yfile.name}")
-            continue
-        pid = (process.get("process") or {}).get("id") or yfile.stem
-        loaded.append((pid, process))
-
-    # Build the ref map ({normalized SD/UC name -> (uc, sd)}) across all processes
-    # and load the curated overrides, so each `subprocess_ref` step can carry a
-    # precise `ref_target` (None when it doesn't resolve — never a fuzzy guess).
-    ref_overrides = load_ref_overrides(ref_links_file)
-    ref_map = build_ref_map(
-        {"id": pid, "name": (p.get("process") or {}).get("name") or "", "diagrams": _diagrams_source(p)}
-        for pid, p in loaded
-    )
-    unresolved_refs: set[str] = set()
+    loaded, unresolved_refs = load_resolved(output_dir, ref_links_file)
 
     index = []
-    for pid, process in loaded:
-        # Compute the per-SD diagrams and their artifact keys once; everything that
-        # used to assume a bare {pid} artifact now spans all of these keys.
-        diagrams = _diagrams_source(process)
-        # Resolve every subprocess-ref step to its (uc, sd) target. Mutating the
-        # shared step dicts here means build_detail picks up `ref_target` in both
-        # diagrams[].steps and the back-compat top-level steps (same objects).
-        for d in diagrams:
-            for step in d.get("steps") or []:
-                ref = step.get("subprocess_ref")
-                if ref:
-                    step["ref_target"] = resolve_ref(ref, ref_map, ref_overrides)
-                    if step["ref_target"] is None:
-                        unresolved_refs.add(ref)
-        keys = [sd_artifact_key(pid, d.get("slug", ""), len(diagrams)) for d in diagrams]
+    for entry in loaded:
+        pid, process, diagrams, keys = entry
         # Activity diagrams are keyed per SD variant ({pid}_{slug}), with the bare
         # {pid} as fallback — checking only the bare name leaves every variant's
         # diagram unreachable. Record which artifacts got claimed so the leftovers
@@ -482,42 +477,35 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
             claimed_ads.setdefault(pid, pid)
         has_bpmn = any(ad_for_slug) or bare_only
         has_seq = any((seq_svg / f"{key}.svg").exists() for key in keys)
-        # [REVIEW] notes ("Prüfung nötig" worklist) can live in ANY SD's .wsd;
-        # aggregate across all, de-duplicating while preserving order.
-        review: list[str] = []
-        for key in keys:
-            kwsd = wsd_dir / f"{key}.wsd"
-            if kwsd.exists():
-                for note in extract_review_notes(kwsd.read_text("utf-8")):
-                    if note not in review:
-                        review.append(note)
-        detail = build_detail(process, review_notes=review)
-        seq_html = seq_svg / f"{pid}.html"
-        if seq_html.exists():
-            overlay = extract_sd_overlay(seq_html.read_text("utf-8"))
-            if overlay:
-                detail["sdOverlay"] = overlay  # back-compat: primary SD overlay
-        # Per-SD: attach each diagram's approval + overlay (from its rendered .html)
-        # and copy its .svg into the webapp. The artifact key is the svg path's stem
-        # (one source of truth with build_detail). Each diagram's approval is tied to
-        # ITS OWN {key}.wsd; for a single-SD process the key equals {pid}, so this
-        # re-touches the same files/approval the back-compat block handles.
+        # The worklist is computed per diagram, so an item knows which step it is about;
+        # a process's list is its diagrams' concatenated, in diagram order.
+        review = [item for i in range(len(diagrams)) for item in review_items(diagrams[i])]
+        # `reviewNotes` is the prose of the same list, de-duplicated as the webapp's current
+        # field has always been. It goes once the webapp reads `reviewItems`.
+        review_notes: list[str] = []
+        for item in review:
+            if item.text not in review_notes:
+                review_notes.append(item.text)
+        detail = build_detail(process, review_notes=review_notes, review=review)
+        # Per-SD: attach each diagram's approval and copy its .svg into the webapp. The
+        # artifact key is the svg path's stem (one source of truth with build_detail).
+        #
+        # An approval is now checked against the diagram's canonical render input rather
+        # than against a `.wsd` file on disk — so the check no longer depends on an
+        # intermediate artifact existing, and it covers the resolved ref targets the DSL
+        # could not express.
+        payload_by_key = {key: entry.payload(i) for i, key in enumerate(keys)}
         for diagram in detail["diagrams"]:
             key = Path(diagram["svg"]).stem
             consulted_keys.add(key)
-            kwsd = wsd_dir / f"{key}.wsd"
-            k_text = kwsd.read_text("utf-8") if kwsd.exists() else None
-            entry = approvals.get(key)
-            diagram["approval"] = approval_for(k_text, entry)
-            # Stale = an approval ENTRY whose .wsd still exists but no longer hashes
-            # to the stamped value (a real diagram change, not a missing source).
-            if entry is not None and k_text is not None and diagram["approval"] is None:
+            payload = payload_by_key.get(key)
+            source_text = canonical_json(payload) if payload is not None else None
+            approval_entry = approvals.get(key)
+            diagram["approval"] = approval_for(source_text, approval_entry)
+            # Stale = an approval ENTRY for a diagram that still exists but no longer
+            # hashes to the stamped value (a real change, not a missing source).
+            if approval_entry is not None and source_text is not None and diagram["approval"] is None:
                 stale_count += 1
-            d_html = seq_svg / f"{key}.html"
-            if d_html.exists():
-                d_overlay = extract_sd_overlay(d_html.read_text("utf-8"))
-                if d_overlay:
-                    diagram["overlay"] = d_overlay
             d_svg = seq_svg / f"{key}.svg"
             if d_svg.exists():
                 shutil.copyfile(d_svg, dest_seq / f"{key}.svg")
@@ -537,7 +525,14 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
             approved_count += 1
         index.append(
             build_index_entry(
-                process, has_bpmn=has_bpmn, has_review=bool(review), has_sequence=has_seq, approved=fully_approved
+                process,
+                has_bpmn=has_bpmn,
+                # Actionable only. Every `uncheckable` item would also be "review needed"
+                # by the letter of the word, and the flag would then be on for 120 of 196
+                # processes where 21 have work to do.
+                has_review=is_actionable(review),
+                has_sequence=has_seq,
+                approved=fully_approved,
             )
         )
         (detail_dir / f"{pid}.json").write_text(json.dumps(detail, ensure_ascii=False, indent=2), "utf-8")
