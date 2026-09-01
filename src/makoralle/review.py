@@ -32,6 +32,7 @@ That is also why ``coverage`` alone is not enough to build this list:
 ones, and only the first are anybody's task.
 """
 
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Any
 
@@ -137,6 +138,18 @@ def _endpoint_item(step: dict[str, Any]) -> ReviewItem | None:
     message = _clean(step.get("message")) or "(ohne Bezeichnung)"
     kind, side = ("endpoint_unread", "Gegenstelle") if any(known) else ("endpoints_unread", "beide Endpunkte")
     return ReviewItem(kind=kind, severity=Severity.DEFECT, step=step.get("nr"), text=f"{message} — {side} ungelesen")
+
+
+#: The severities that name work somebody can actually do. An ``uncheckable`` item is a
+#: standing property of the source, not a task, so a "Prüfung nötig" flag that counted it
+#: would be on for 120 of the corpus's 196 processes while only 21 have anything to act on
+#: — and a flag that is on for everything says nothing.
+ACTIONABLE = frozenset({Severity.DEFECT, Severity.STRUCTURE})
+
+
+def is_actionable(items: Iterable[ReviewItem]) -> bool:
+    """Whether anything on this worklist is somebody's task."""
+    return any(item.severity in ACTIONABLE for item in items)
 
 
 def review_items(diagram: dict[str, Any]) -> list[ReviewItem]:

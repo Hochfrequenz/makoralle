@@ -18,7 +18,7 @@ import yaml
 
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.ref_links import build_ref_map, load_ref_overrides, resolve_ref
-from makoralle.review import ReviewItem, review_items
+from makoralle.review import ReviewItem, is_actionable, review_items
 from makoralle.serialization.makrake import canonical_json, makrake_diagram
 
 
@@ -525,7 +525,14 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
             approved_count += 1
         index.append(
             build_index_entry(
-                process, has_bpmn=has_bpmn, has_review=bool(review), has_sequence=has_seq, approved=fully_approved
+                process,
+                has_bpmn=has_bpmn,
+                # Actionable only. Every `uncheckable` item would also be "review needed"
+                # by the letter of the word, and the flag would then be on for 120 of 196
+                # processes where 21 have work to do.
+                has_review=is_actionable(review),
+                has_sequence=has_seq,
+                approved=fully_approved,
             )
         )
         (detail_dir / f"{pid}.json").write_text(json.dumps(detail, ensure_ascii=False, indent=2), "utf-8")

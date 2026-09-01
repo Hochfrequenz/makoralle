@@ -180,3 +180,27 @@ def test_the_payload_round_trips_through_json() -> None:
     Python understands."""
     p = _payload({"nr": 1, "pid_refs": [1], "deadline_rule": {"type": "complex", "raw": "x"}})
     assert json.loads(canonical_json(p)) == p
+
+
+def test_the_dash_placeholder_is_not_a_frist() -> None:
+    """`deadline: "--"` is how the corpus writes "no Frist" — 554 steps at v0.0.20, more
+    than a third of all of them.
+
+    It is a placeholder in a table cell, not a sentence. Passed through, makrake draws
+    `Frist: --` beside the arrow: a Frist asserted on every step whose source says there
+    is none. Caught by looking at a rendered page (`lieferbeginn`'s three `par` branches),
+    not by a test — hence this one.
+    """
+    for dash in ("--", "—", " – ", "---"):
+        (step,) = _payload({"nr": 1, "deadline": dash, "deadline_rule": {"type": "none", "raw": dash}})["steps"]
+        assert "deadline" not in step, dash
+        assert "deadline_rule" not in step, dash
+
+
+def test_real_prose_that_is_short_or_contains_a_dash_survives() -> None:
+    """The complement, so the placeholder check cannot grow into eating content. `"1 WT"`
+    is a real Frist on two corpus steps."""
+    (short,) = _payload({"nr": 1, "deadline": "1 WT"})["steps"]
+    assert short["deadline"] == "1 WT"
+    (dashed,) = _payload({"nr": 1, "deadline": "Unverzüglich — spätestens 2 WT"})["steps"]
+    assert dashed["deadline"] == "Unverzüglich — spätestens 2 WT"

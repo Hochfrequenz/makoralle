@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from makoralle.review import REVIEW_MARKER, Severity, review_items
+from makoralle.review import REVIEW_MARKER, Severity, is_actionable, review_items
 
 
 def _diagram(*steps: dict[str, Any], notes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -128,3 +128,30 @@ def test_a_frist_the_source_does_not_state_earns_nothing() -> None:
 
 def test_an_empty_diagram_is_not_an_error() -> None:
     assert review_items({}) == []
+
+
+def test_only_a_defect_or_unstructured_prose_is_somebody_s_task() -> None:
+    """What the webapp's "Prüfung nötig" flag has to mean.
+
+    Every `uncheckable` item is "review needed" by the letter of the words, and a flag
+    counting them is on for 120 of the corpus's 196 processes while 21 have work to do — a
+    flag that is on for everything says nothing. Measured on dataset v0.0.20, the 21 match
+    the processes the old `[REVIEW]`-grep flagged, which is the behaviour to preserve.
+    """
+    reference = _diagram(_step(deadline_rule={"type": "reference", "raw": "Gemäß Vertrag."}))
+    assert review_items(reference) and not is_actionable(review_items(reference))
+
+    partial = _diagram(
+        _step(deadline_rule={"type": "unverzüglich", "raw": "Unverzüglich, jedoch spätestens bis zum 3. WT."})
+    )
+    assert review_items(partial) and not is_actionable(review_items(partial))
+
+    for actionable in (
+        _diagram(_step(deadline_rule={"type": "complex", "raw": "Irgendwas."})),
+        _diagram(_step(receiver="?")),
+    ):
+        assert is_actionable(review_items(actionable))
+
+
+def test_an_empty_worklist_is_not_actionable() -> None:
+    assert not is_actionable([])

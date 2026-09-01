@@ -79,6 +79,24 @@ def _subprocess_ref_id(step: dict[str, Any]) -> str | None:
     return f"{uc}__{sd}" if sd else str(uc)
 
 
+def _prose(text: Any) -> str | None:
+    """A step's Frist prose, or ``None`` when the source states none.
+
+    ``deadline: "--"`` is how the corpus writes "no Frist" — 554 steps at v0.0.20, more
+    than a third of all of them. It is a placeholder in a table cell, not a sentence, and
+    passing it through makes the renderer draw `Frist: --` beside the arrow: a Frist
+    asserted on every step whose source says there is not one. `lieferbeginn`'s three
+    `par` branches showed exactly that.
+
+    Only a dash-run counts. `"1 WT"` is real (2 steps), and so is any prose that merely
+    contains a dash.
+    """
+    cleaned = " ".join(str(text or "").split())
+    if not cleaned or set(cleaned) <= {"-", "\u2013", "\u2014"}:
+        return None
+    return cleaned
+
+
 def _deadline(step: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
     """The step's Frist as makrake takes it: the prose, and the structure.
 
@@ -87,7 +105,7 @@ def _deadline(step: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
     so dropping either one silently changes what gets drawn.
     """
     raw_rule = step.get("deadline_rule")
-    prose = step.get("deadline") or None
+    prose = _prose(step.get("deadline"))
     if not raw_rule:
         return prose, None
     rule = raw_rule if isinstance(raw_rule, DeadlineRule) else DeadlineRule.model_validate(raw_rule)
@@ -95,13 +113,13 @@ def _deadline(step: dict[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
     if lifted is None:
         # `type: "none"` — the source says there is no Frist. Emitting an empty structure
         # would make makrake draw a tag for an obligation that does not exist.
-        return prose or None, None
+        return prose, None
     # `by_alias` is not used and `exclude_none` is: makrake's Rust model defaults every
     # optional field, and a JSON `null` deserializes into `Option::None` anyway, so the
     # difference is only size — but `raw` has no counterpart in makuna's `Deadline` at all
     # (it lives on the step as `deadline`), so it must not be emitted here.
     structured = lifted.model_dump(mode="json", exclude_none=True, exclude={"raw"})
-    return prose or lifted.raw or None, structured
+    return prose or _prose(lifted.raw), structured
 
 
 def _step(step: dict[str, Any]) -> dict[str, Any]:
