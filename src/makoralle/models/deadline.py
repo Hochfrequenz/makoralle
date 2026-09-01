@@ -36,16 +36,21 @@ class Offset(BaseModel):
     """A distance from an anchor, in the unit the source names.
 
     ``unit`` exists because the corpus is not only Werktage: two Frists are stated in
-    Stunden and two in Kalendertage, and a bare ``business_days: int`` cannot hold either
-    without lying about which calendar applies.
+    Stunden — `einrichtung_der_konfigurationen…` ("1 Stunde nach dem ÜZ von Nr. 1") and
+    `ermittlung_der_malo-id_der_marktlokation` ("2 Stunden nach dem ÜZ von Nr. 1") — and a
+    bare ``business_days: int`` cannot hold them without lying about which calendar applies.
     """
 
     amount: int
     #: Defaulted, where makoralle#57 has it required: every offset the flat rule can express
     #: is in Werktage (the field is literally ``business_days``), so requiring it would make
     #: the lift restate the only value it can produce — on all 160 offsets across the 906
-    #: ``diagrams[]`` rules at v0.0.20. Kalendertage and Stunden exist (2 Frists each) and
-    #: must be stated explicitly, never inferred.
+    #: ``diagrams[]`` rules at v0.0.20. A non-Werktage unit must be stated explicitly, never
+    #: inferred. ``kalendertage`` is in the Literal on makoralle#57's report of 2 Frists at
+    #: v0.0.18; at v0.0.20 no Frist names Kalendertage in any spelling ("Kalendertag", "KT")
+    #: in either the 906 ``diagrams[]`` rules or all 1601 including ``sequence_diagram`` —
+    #: only "Kalenderjahr", which is not an offset unit. Kept for #57 step 3, like
+    #: ``kind="event"``, not because this corpus produces one.
     unit: Literal["werktage", "kalendertage", "stunden"] = "werktage"
     #: Defaults to ``nach`` rather than being optional: of the 148 rules at v0.0.20 that
     #: carry an offset and no explicit direction, **0** have prose containing "vor". Making

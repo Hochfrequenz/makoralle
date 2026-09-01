@@ -333,8 +333,9 @@ def test_is_conditional_means_more_than_one_alternative() -> None:
 
 
 def test_an_offset_is_werktage_unless_the_source_says_otherwise() -> None:
-    """The default carries the corpus: Werktage is what a bare "N. WT" means. Kalendertage
-    and Stunden exist (2 Frists each) and must be stated, never inferred."""
+    """The default carries the corpus: Werktage is what a bare "N. WT" means. Stunden exist
+    (2 Frists at v0.0.20) and must be stated, never inferred; no Frist at v0.0.20 names
+    Kalendertage, so that member is there for #57 step 3 rather than for this corpus."""
     assert Offset(amount=3).unit == "werktage"
     assert Offset(amount=3, unit="stunden").unit == "stunden"
 
@@ -426,3 +427,26 @@ def test_a_recurrence_alone_is_content_enough_for_a_backstop() -> None:
     d = deadline_from_rule(DeadlineRule(type="reference", recurrence="werktäglich", raw="Werktäglich."))
     assert d is not None and d.alternatives[0].backstop is not None
     assert d.alternatives[0].backstop.recurrence == "werktäglich"
+
+
+def test_an_anchor_alone_is_content_enough_for_a_backstop() -> None:
+    """`has_content`'s `anchor.kind != "unanchored"` term, on the one path that reaches it.
+
+    The 54 corpus rules with an anchor and no offset are all `unverzüglich`/`parallel`, so
+    they take the immediacy branch and never get here; the two `terminiert` ones ("Spätester
+    ÜT ist zum Zahlungsziel in der Rechnung") also carry a subject, which masks the term.
+    Drop it and this `reference` rule silently loses its anchor — 0 tests notice.
+    """
+    d = deadline_from_rule(DeadlineRule(type="reference", anchor="Zahlungsziel", raw="Zum Zahlungsziel."))
+    assert d is not None and d.alternatives[0].backstop is not None
+    assert d.alternatives[0].backstop.anchor == Anchor(kind="external", name="Zahlungsziel")
+    assert d.states_a_backstop
+
+
+def test_an_offset_alone_is_content_enough_for_a_backstop() -> None:
+    """`has_content`'s `offset is not None` term. No rule at v0.0.20 carries an offset and
+    nothing else — every one names a step or an anchor too — so the term is unexercised by
+    the corpus and by every other test here, and dropping it survives the suite."""
+    d = deadline_from_rule(DeadlineRule(type="reference", business_days=3, raw="3 WT."))
+    assert d is not None and d.alternatives[0].backstop is not None
+    assert d.alternatives[0].backstop.offset == Offset(amount=3, unit="werktage", direction="nach")
