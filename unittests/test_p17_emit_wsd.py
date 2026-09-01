@@ -52,6 +52,73 @@ def test_deadline_note_terminiert_and_structured_get_no_note() -> None:
         assert _deadline_note(_step_with_deadline(structured), ["LF", "NB"]) is None
 
 
+def test_a_stated_backstop_the_tag_cannot_show_becomes_a_note() -> None:
+    """makoralle#57 step 2.
+
+    The flat rule has ONE set of anchor fields. When the immediacy clause claims them
+    ("Unverzüglich nach dem ÜZ von Nr. 1"), the hard date that follows has nowhere to go and
+    survives only in `raw` — so the tag reads `{ÜZ#1}` and the regulated date is nowhere on the
+    diagram. 18 steps ship that way, `netznutzungsabrechnung` 2, 3 and 4 among them.
+
+    The whole sentence goes in the note, opening word included: `{ÜZ#1}` names an anchor, not the
+    promptness duty, so stripping "Unverzüglich" as the bare-tag case does would drop the one
+    thing this tag omits.
+    """
+    rule = DeadlineRule(
+        type="unverzüglich",
+        reference_step=1,
+        reference_event="ÜZ",
+        raw="Unverzüglich nach dem ÜZ von Nr. 1, jedoch spätester ÜT ist der 4. WT vor dem Zahlungsziel.",
+    )
+    assert _deadline_tag(rule) == "{ÜZ#1}"
+    sentence = _unverzueglich_sentence_beyond_the_tag(rule)
+    assert sentence.startswith("Unverzüglich nach dem ÜZ von Nr. 1")
+    assert "spätester ÜT ist der 4. WT vor dem Zahlungsziel" in sentence
+
+    note = _deadline_note(_step_with_deadline(rule), ["LF", "NB"])
+    assert note is not None
+    # Unflagged: the sentence is readable and real, so it is not "Prüfung nötig".
+    assert "(i) Frist:" in note
+    assert "[REVIEW]" not in note
+
+
+def test_a_tag_that_already_shows_its_offset_gets_no_note() -> None:
+    """The guard that keeps step 2 from becoming noise.
+
+    148 rules carry `business_days`, so their tag states the date on the arrow
+    ("{≤07:00 4WT ÜT#1}"). Repeating it beside the arrow would add a box to a diagram with little
+    room and tell the reader nothing new — which is why the comparison is "tag carries no offset",
+    not "prose mentions a backstop".
+    """
+    rule = DeadlineRule(
+        type="unverzüglich",
+        business_days=4,
+        reference_step=1,
+        reference_event="ÜT",
+        latest_time="07:00",
+        raw="Unverzüglich, jedoch spätester ÜT ist 07:00 Uhr des 4. WT nach dem ÜT von Nr. 1.",
+    )
+    assert _deadline_tag(rule) == "{≤07:00 4WT ÜT#1}"
+    assert _unverzueglich_sentence_beyond_the_tag(rule) == ""
+    assert _deadline_note(_step_with_deadline(rule), ["LF", "NB"]) is None
+
+
+def test_step_2_never_touches_a_tag() -> None:
+    """Purely additive: it can only add a note.
+
+    Verified over the corpus as well — across all 906 `diagrams[]` rules, 18 notes gained, 0 lost,
+    0 altered, 0 tags changed.
+    """
+    for kwargs in (
+        {"reference_step": 1, "reference_event": "ÜZ"},
+        {"latest_time": "09:00"},
+        {"business_days": 2, "reference_step": 1, "reference_event": "ÜT"},
+    ):
+        with_backstop = DeadlineRule(type="unverzüglich", raw="Unverzüglich, jedoch spätester ÜT ist X.", **kwargs)
+        without = DeadlineRule(type="unverzüglich", raw="Unverzüglich.", **kwargs)
+        assert _deadline_tag(with_backstop) == _deadline_tag(without)
+
+
 def test_emit_flat() -> None:
     sd = SequenceDiagram(
         participants=["LF", "NB"],

@@ -103,18 +103,39 @@ def _clean_note_text(text: str) -> str:
 _UNVERZUEGLICH_MARKER = re.compile(r"^\s*(?:unverzüglich|sofort)\b[\s,.;:!?]*", re.I)
 
 
+#: The clause a Frist uses to introduce a hard date after an immediacy duty:
+#: "…, jedoch spätester ÜT ist …", "Spätester ÜZ ist …". Matching it is how the
+#: second branch below decides that a tag under-reports; it can only ever ADD a
+#: note, never remove or alter one.
+_BACKSTOP_SENTENCE = re.compile(r"jedoch\s+sp[äa]test|sp[äa]tester\s+(?:ÜT|ÜZ)\s+ist", re.I)
+
+
 def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
     """What an ``unverzüglich`` rule's own sentence says that its tag does not, or "".
 
-    Only for the rows whose tag comes out bare — no clock, no working days, no step, so
-    :func:`_deadline_tag` renders ``{u}`` and nothing else. Those are the ones where the sentence
-    carries an event the reader acts on and the tag carries none of it: "Unverzüglich nach
-    Kenntnisnahme", "Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung".
+    Two cases, and they return different text because the tag says different things.
 
-    Deliberately *not* extended to a row that already has a structured tag. Some of those are
-    lossy too, but deciding which needs comparing each tag against its own sentence, and a note
-    that repeats what the arrow already says is noise on a diagram that has little room. That
-    comparison is makorele#101's remaining scope.
+    **A bare tag.** No clock, no working days, no step, so :func:`_deadline_tag` renders ``{u}``
+    and nothing else, while the sentence carries an event the reader acts on: "Unverzüglich nach
+    Kenntnisnahme", "Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung". The note
+    drops the opening "Unverzüglich" — the tag already says it.
+
+    **A tag with an anchor but no offset, whose sentence states a hard date.** The flat rule has
+    one set of anchor fields; when the immediacy clause claims them ("Unverzüglich nach dem ÜZ
+    von Nr. 1"), the backstop that follows ("…, jedoch spätester ÜT ist der 4. WT vor dem
+    Zahlungsziel") has nowhere to go and survives only in ``raw``. The tag comes out ``{ÜZ#1}``
+    and the regulated date is nowhere on the diagram — 18 steps ship that way, including
+    ``netznutzungsabrechnung`` 2, 3 and 4.
+
+    That second case is what makoralle#57 step 2 is, and it was this function's stated remaining
+    scope ("deciding which needs comparing each tag against its own sentence"). The comparison is
+    narrow on purpose: only when the tag carries NO offset. A row whose tag already shows one
+    ("{≤07:00 4WT ÜT#1}", 148 of them) states its date on the arrow, and a note repeating it
+    would be noise on a diagram with little room.
+
+    Here the note keeps the **whole** sentence, opening word included, because this tag does not
+    say "unverzüglich" — ``{ÜZ#1}`` names an anchor, not the promptness duty. Stripping the word
+    as the bare-tag case does would drop the one thing the tag omits.
 
     Why a note rather than a longer tag: the anchors are multi-word — 63 characters for "dem
     andernfalls erforderlichen Versand der BG-SZR (Kategorie B)", and longer elsewhere in the
@@ -125,9 +146,12 @@ def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
     """
     if rule.type != "unverzüglich":
         return ""
-    if rule.latest_time or rule.business_days is not None or rule.reference_step:
-        return ""
-    return _UNVERZUEGLICH_MARKER.sub("", rule.raw or "").strip(" .;,!?")
+    raw = rule.raw or ""
+    if not (rule.latest_time or rule.business_days is not None or rule.reference_step):
+        return _UNVERZUEGLICH_MARKER.sub("", raw).strip(" .;,!?")
+    if rule.business_days is None and _BACKSTOP_SENTENCE.search(raw):
+        return _clean_note_text(raw)
+    return ""
 
 
 def _deadline_note(step: SDStep, known_lanes: list[str]) -> str | None:
