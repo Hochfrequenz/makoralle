@@ -1,11 +1,16 @@
+import itertools
+import re
+
 import yaml
 
+from makoralle.models.process import DeadlineRule
 from makoralle.serialization.markdown import (
     _deadline_legend,
     _render_sd_table,
     _render_sequence_diagram,
     yaml_to_markdown,
 )
+from makoralle.serialization.wsd import _deadline_tag
 
 
 def test_yaml_to_markdown() -> None:
@@ -175,7 +180,7 @@ def test_deadline_legend_defines_every_form_the_clocked_and_recurring_tags_show(
             }
         )
     )
-    assert "`{u ≤HH:MM …}`" in clocked
+    assert "`{u ≤HH:MM nWT nach ÜZ#N}`" in clocked
     assert "`{u ≤nWT vor|nach ÜZ#N}`" in clocked
 
     # `{u täglich …}` is renderable and was undefined: the recurring entries used to be gated on
@@ -194,6 +199,156 @@ def test_deadline_legend_defines_every_form_the_clocked_and_recurring_tags_show(
         )
     )
     assert "`{täglich ≤HH:MM}`" in terminiert_recurring
+
+
+#: Every marker a reader has to look up, and a fragment of the entry that must define it. Written
+#: from the *reader's* side and deliberately not sharing a regex with `_deadline_legend`: the point
+#: is that dropping or narrowing an entry there fails here. Mutation testing found eight of the
+#: legend's twelve gates unpinned and four tag forms carrying a marker nothing defined, including
+#: `{u #2 täglich}`, whose step this file's own fixture had stopped explaining.
+_MARKERS: list[tuple[str, str, str]] = [
+    (r"^\{u\}$", "`{u}`", "the bare immediacy marker"),
+    (r"^\{u (ÜZ|ÜT)?#[\d/]+", "`{u #N}`", "an immediacy anchor on a step"),
+    (r"^\{u .*[\s≤](\d+)(WT|KT|h)\b", "`{u ≤nWT vor|nach ÜZ#N}`", "an unverzüglich bound in working days"),
+    (r"^\{u [^}]*≤\d\d:\d\d", "`{u ≤HH:MM nWT nach ÜZ#N}`", "an unverzüglich bound at a clock time"),
+    (r"^\{u [^}]*\b(täglich|werktäglich)\b", "`{u täglich …}`", "a recurring unverzüglich duty"),
+    (r"^\{∥\}$", "`{∥}`", "a coupling naming no single step"),
+    (r"^\{∥#[\d/]+\}$", "`{∥#N}`", "a coupling to a step"),
+    (r"^\{≤(\d+)(WT|KT|h)\b", "`{≤nWT vor|nach Anker}`", "a terminiert offset"),
+    (r"^\{≤\d\d:\d\d", "`{≤HH:MM Anker}`", "a terminiert clock time"),
+    (r"^\{≤[^\d≤]", "`{≤Anker}`", "a terminiert bare anchor"),
+    (r"^\{(täglich|werktäglich)\b", "`{täglich ≤HH:MM}`", "a recurring terminiert Frist"),
+    (r"^\{terminiert\}$", "`{terminiert}`", "a terminiert Frist with nothing structured in it"),
+]
+
+
+def test_the_legend_defines_every_marker_any_reachable_tag_can_show() -> None:
+    """No arrow may carry a marker the legend beside it does not explain.
+
+    Enumerated over the field combinations a `DeadlineRule` can hold rather than over the corpus,
+    because the corpus is one sample of a non-deterministic Vision stage and this file cannot read
+    it anyway. Both directions are checked: every marker present is defined, and — the half that
+    regressed twice — a combined tag such as `{u #2 täglich}` or `{u täglich ≤2WT nach ÜZ#3}` has
+    *each* of its markers defined, not merely whichever one matched the whole string.
+    """
+    fields: dict[str, list[object]] = {
+        "reference_step": [None, 3],
+        "reference_event": [None, "ÜZ"],
+        "business_days": [None, 2],
+        "latest_time": [None, "14:00"],
+        "anchor": [None, "Zahlungsziel"],
+        "direction": [None, "vor"],
+        "recurring": [False, True],
+    }
+    seen: set[str] = set()
+    for combo in itertools.product(*fields.values()):
+        kwargs = dict(zip(fields.keys(), combo, strict=True))
+        for rule_type in ("unverzüglich", "parallel", "terminiert"):
+            rule = {"type": rule_type, "raw": "Unverzüglich nach Nr. 3.", **kwargs}
+            tag = _deadline_tag(DeadlineRule.model_validate(rule))
+            if not tag or tag in seen:
+                continue
+            seen.add(tag)
+            text = "\n".join(_deadline_legend({"steps": [{"nr": 1, "deadline_rule": rule}]}))
+            for pattern, entry, what in _MARKERS:
+                if re.search(pattern, tag):
+                    assert entry in text, f"{tag} shows {what} and the legend does not define {entry}"
+    # the enumeration has to have reached the shapes this is about, or it proves nothing
+    assert len(seen) > 40
+    for tag in ("{u}", "{u ÜZ#3}", "{u ≤2WT vor #3}", "{u ≤14:00}", "{∥#3}", "{≤Zahlungsziel}", "{terminiert}"):
+        assert tag in seen, tag
+    assert any(re.search(r"^\{u [^}]*#[\d/]+ .*(täglich|werktäglich)", t) for t in seen) or any(
+        re.search(r"^\{u [^}]*(täglich|werktäglich).*≤", t) for t in seen
+    )
+
+
+def test_the_legend_states_no_marker_the_diagram_does_not_show() -> None:
+    """The other direction, per family: an entry for a form this diagram never draws is how the
+    old type-keyed gating went wrong (522 stale lines on 146 processes at v0.0.20)."""
+    only_bare = "\n".join(_deadline_legend({"steps": [{"nr": 1, "deadline_rule": {"type": "unverzüglich"}}]}))
+    assert "`{u}`" in only_bare
+    for absent in (
+        "`{u #N}`",
+        "`{u ≤nWT vor|nach ÜZ#N}`",
+        "`{u ≤HH:MM nWT nach ÜZ#N}`",
+        "`{u täglich …}`",
+        "∥",
+        "Anker",
+    ):
+        assert absent not in only_bare, absent
+    only_coupling = "\n".join(
+        _deadline_legend({"steps": [{"nr": 1, "deadline_rule": {"type": "parallel", "reference_step": 2}}]})
+    )
+    assert "`{∥#N}`" in only_coupling
+    for absent in ("`{∥}`", "`{u}`", "Anker", "täglich"):
+        assert absent not in only_coupling, absent
+    # a clock on a `terminiert` must not pull in the `unverzüglich` clock entry, and vice versa
+    term_clock = "\n".join(
+        _deadline_legend(
+            {"steps": [{"nr": 1, "deadline_rule": {"type": "terminiert", "latest_time": "14:00", "anchor": "X"}}]}
+        )
+    )
+    assert "`{≤HH:MM Anker}`" in term_clock
+    assert "`{u ≤HH:MM nWT nach ÜZ#N}`" not in term_clock
+    assert "`{≤Anker}`" not in term_clock  # `{≤14:00 X}` is not a bare anchor
+    # ... and a recurring Frist carries a clock whose own entry explains it, so the non-recurring
+    # clock entry must not appear beside it — this put a stale line on all five recurring diagrams
+    # at v0.0.20 (`übermittlung_der_täglichen_ausfallarbeitsüberführungszeitreihe` among them)
+    recurring = "\n".join(
+        _deadline_legend(
+            {"steps": [{"nr": 1, "deadline_rule": {"type": "terminiert", "recurring": True, "latest_time": "14:00"}}]}
+        )
+    )
+    assert "`{täglich ≤HH:MM}`" in recurring
+    assert "`{≤HH:MM Anker}`" not in recurring
+    assert "`{≤Anker}`" not in recurring
+    # `werktäglich` is the other half of that entry and ships too (`übermittlung_netzgangzeitreihe`
+    # nr 1 renders `{werktäglich ≤12:00}`), so the entry may not be narrowed to `täglich`
+    werktaeglich = "\n".join(
+        _deadline_legend(
+            {
+                "steps": [
+                    {
+                        "nr": 1,
+                        "deadline_rule": {
+                            "type": "terminiert",
+                            "recurring": True,
+                            "recurrence": "werktäglich",
+                            "latest_time": "12:00",
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    assert "`{täglich ≤HH:MM}`" in werktaeglich
+    # a two-digit step must still match the coupling entry (`beginn_messstellenbetrieb` renders
+    # `{∥#14}`, `{∥#16}` and `{∥#17}`)
+    two_digit = "\n".join(
+        _deadline_legend({"steps": [{"nr": 1, "deadline_rule": {"type": "parallel", "reference_step": 14}}]})
+    )
+    assert "`{∥#N}`" in two_digit
+    # a bound's own anchor is not an immediacy anchor: `{u ≤2WT nach ÜT#1}` states no "unverzüglich
+    # nach Schritt N", so that entry must not be pulled in by the `#1` inside the bound
+    bounded = "\n".join(
+        _deadline_legend(
+            {
+                "steps": [
+                    {
+                        "nr": 1,
+                        "deadline_rule": {
+                            "type": "unverzüglich",
+                            "business_days": 2,
+                            "reference_step": 1,
+                            "reference_event": "ÜT",
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    assert "`{u ≤nWT vor|nach ÜZ#N}`" in bounded
+    assert "`{u #N}`" not in bounded
 
 
 def test_deadline_legend_emitted_for_terminiert() -> None:
