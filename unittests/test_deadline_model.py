@@ -3,6 +3,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -535,8 +536,10 @@ def test_every_shape_the_corpus_has_still_lifts() -> None:
         deadline_from_rule(rule)  # must not raise
 
 
-def _coverage_shapes() -> list[dict[str, object]]:
-    shapes = json.loads((Path(__file__).parent / "fixtures" / "deadline_coverage_shapes.json").read_text("utf-8"))
+def _coverage_shapes() -> list[dict[str, Any]]:
+    shapes: list[dict[str, Any]] = json.loads(
+        (Path(__file__).parent / "fixtures" / "deadline_coverage_shapes.json").read_text("utf-8")
+    )
     assert shapes, "fixture is empty — the assertions below would pass vacuously"
     return shapes
 
