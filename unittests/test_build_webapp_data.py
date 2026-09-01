@@ -1,3 +1,4 @@
+import copy
 import json
 import pathlib
 from typing import Any
@@ -8,8 +9,8 @@ from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.webapp_export import (
     build_detail,
     build_index_entry,
-    extract_review_notes,
-    extract_sd_overlay,
+    diagram_source_text,
+    export_makrake_inputs,
     run,
     sd_source_hash,
 )
@@ -120,33 +121,14 @@ def test_build_detail_pid_table_flattens_one_row_per_ref() -> None:
     ]
 
 
-def test_extract_review_notes_parses_wsd_lines() -> None:
-    wsd = (
-        "title X\n"
-        "note right of NB: (!) Frist: Deaktivierung  [REVIEW]\n"
-        "NB->ÜNB: msg\n"
-        "note left of ÜNB: plain note without marker\n"
-    )
-    assert extract_review_notes(wsd) == ["(!) Frist: Deaktivierung"]
-
-
-def test_extract_review_notes_ignores_info_frist_notes() -> None:
-    """A 'reference' deadline renders as an (i) note without [REVIEW]; it must NOT be
-    surfaced as a review item ("Prüfung nötig")."""
-    wsd = (
-        "title X\n"
-        "note right of NB: (i) Frist: Gemäß Rahmenvertrag.\n"
-        "note right of LF: (!) Frist: Echtes Review  [REVIEW]\n"
-    )
-    assert extract_review_notes(wsd) == ["(!) Frist: Echtes Review"]
-
-
 def test_sd_source_hash_ignores_whitespace_churn_but_not_content() -> None:
-    base = "title X\nNB->ÜNB: Anmeldung\n"
+    """The hash is taken over a diagram's canonical render input; the function itself only
+    cares that cosmetic churn does not clear a badge while a content change does."""
+    base = '{"id":"x","steps":[{"message":"Anmeldung"}]}'
     # leading/trailing whitespace + CRLF line endings normalize away
-    assert sd_source_hash(base) == sd_source_hash("\n  title X\r\nNB->ÜNB: Anmeldung\r\n  ")
+    assert sd_source_hash(base) == sd_source_hash(f"\n  {base}\r\n  ".replace("\n", "\r\n"))
     # a real content change yields a different hash
-    assert sd_source_hash(base) != sd_source_hash("title X\nNB->ÜNB: Abmeldung\n")
+    assert sd_source_hash(base) != sd_source_hash(base.replace("Anmeldung", "Abmeldung"))
     # it is a hex sha256 digest
     h = sd_source_hash(base)
     assert len(h) == 64 and all(c in "0123456789abcdef" for c in h)
@@ -161,17 +143,24 @@ def test_run_emits_index_detail_and_copies_svgs(tmp_path: pathlib.Path) -> None:
     out = tmp_path / "output"
     web = tmp_path / "webapp"
     pid = "abstimmung_der_netzzeitreihe"
-    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    # A copy, with one step's Frist left unstructured, so the worklist has something to
+    # report. `type: "complex"` is prose nobody has reduced yet — what the old build
+    # published as a `[REVIEW]` note and this one derives from the model.
+    sample = copy.deepcopy(SAMPLE)
+    sample["sequence_diagram"]["steps"][1]["deadline_rule"] = {"type": "complex", "raw": "Gemäß Rahmenvertrag."}
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(sample, allow_unicode=True))
     _write(out / "sequence_svg" / f"{pid}.svg", "<svg>seq</svg>")
     _write(out / "bpmn" / f"{pid}.svg", "<svg>bpmn</svg>")
-    _write(out / "sequence" / f"{pid}.wsd", "note right of NB: (!) Frist  [REVIEW]\n")
 
     run(output_dir=out, webapp_dir=web)
 
     index = json.loads((web / "src/data/processes.json").read_text("utf-8"))
     assert index[0]["id"] == pid and index[0]["hasBpmn"] and index[0]["hasReview"] and index[0]["hasSequence"]
     detail = json.loads((web / f"src/data/processes/{pid}.json").read_text("utf-8"))
-    assert detail["reviewNotes"] == ["(!) Frist"]
+    assert detail["reviewNotes"] == ["Gemäß Rahmenvertrag."]
+    assert detail["reviewItems"] == [
+        {"kind": "deadline_unstructured", "severity": "structure", "step": 2, "text": "Gemäß Rahmenvertrag."}
+    ]
     assert (web / "public/diagrams/sequence" / f"{pid}.svg").read_text("utf-8") == "<svg>seq</svg>"
     assert (web / "public/diagrams/bpmn" / f"{pid}.svg").exists()
 
@@ -179,13 +168,12 @@ def test_run_emits_index_detail_and_copies_svgs(tmp_path: pathlib.Path) -> None:
 def test_run_flags_missing_artifacts_and_orders_index(tmp_path: pathlib.Path) -> None:
     out = tmp_path / "output"
     web = tmp_path / "webapp"
-    # Process A: full artifacts (bpmn + sequence svg + [REVIEW] wsd), category MaBiS.
+    # Process A: full artifacts (bpmn + sequence svg), category MaBiS.
     a_id = "abstimmung_der_netzzeitreihe"
     _write(out / "yaml" / f"{a_id}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
     _write(out / "sequence_svg" / f"{a_id}.svg", "<svg>seq</svg>")
     _write(out / "bpmn" / f"{a_id}.svg", "<svg>bpmn</svg>")
-    _write(out / "sequence" / f"{a_id}.wsd", "note right of NB: (!) Frist  [REVIEW]\n")
-    # Process B: only YAML, no bpmn svg / sequence svg / wsd. Category GPKE sorts first.
+    # Process B: only YAML, no bpmn svg / sequence svg. Category GPKE sorts first.
     b = {
         "process": {"id": "lieferbeginn", "name": "Lieferbeginn", "category": "GPKE", "source": ""},
         "use_case": {"roles": []},
@@ -209,37 +197,40 @@ def test_run_flags_missing_artifacts_and_orders_index(tmp_path: pathlib.Path) ->
     assert (web / "src/data/processes/lieferbeginn.json").exists()
 
 
-def test_run_marks_approved_only_when_hash_matches_current_wsd(tmp_path: pathlib.Path) -> None:
+def test_run_marks_approved_only_when_the_hash_matches_the_current_diagram(tmp_path: pathlib.Path) -> None:
+    """An approval vouches for a diagram's content, so it survives a rebuild that changes
+    nothing and clears when the diagram moves.
+
+    The subject is the canonical render input rather than a `.wsd` file, which is why the
+    stamped hash comes from `diagram_source_text`: the approve command asks the exporter
+    for the text instead of rebuilding it, so the two cannot drift apart.
+    """
     out = tmp_path / "output"
     web = tmp_path / "webapp"
-    wsd_text = "title Anmeldung\nNB->ÜNB: Anmeldung\n"
 
-    # approved: hash matches the current .wsd
     ok = "abstimmung_der_netzzeitreihe"  # MaBiS, sorts after GPKE
     _write(out / "yaml" / f"{ok}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
     _write(out / "sequence_svg" / f"{ok}.svg", "<svg>seq</svg>")
-    _write(out / "sequence" / f"{ok}.wsd", wsd_text)
 
-    # stale: an entry exists but the .wsd has since changed (hash mismatch)
     stale = {
         "process": {"id": "lieferbeginn", "name": "Lieferbeginn", "category": "GPKE", "source": ""},
         "use_case": {"roles": []},
-        "sequence_diagram": {"participants": [], "steps": []},
+        "sequence_diagram": {"participants": ["NB", "LF"], "steps": [{"nr": 1, "sender": "NB", "receiver": "LF"}]},
     }
     _write(out / "yaml" / "lieferbeginn.yaml", yaml.safe_dump(stale, allow_unicode=True))
     _write(out / "sequence_svg" / "lieferbeginn.svg", "<svg>seq</svg>")
-    _write(out / "sequence" / "lieferbeginn.wsd", "title CHANGED\nNB->LF: x\n")
 
     approvals = {
         "approvals": {
             ok: {
-                "sha256": sd_source_hash(wsd_text),
+                "sha256": sd_source_hash(diagram_source_text(out, ok) or ""),
                 "approved_by": "Joscha Metze <joscha@metze.eu>",
                 "approved_at": "2026-06-30",
                 "note": "",
             },
+            # stamped against a diagram that has since changed
             "lieferbeginn": {
-                "sha256": sd_source_hash("title OLD\nNB->LF: x\n"),
+                "sha256": sd_source_hash('{"id":"lieferbeginn","steps":[]}'),
                 "approved_by": "Someone",
                 "approved_at": "2026-01-01",
             },
@@ -266,7 +257,6 @@ def test_run_no_approvals_file_means_nothing_approved(tmp_path: pathlib.Path) ->
     pid = "abstimmung_der_netzzeitreihe"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
     _write(out / "sequence_svg" / f"{pid}.svg", "<svg>seq</svg>")
-    _write(out / "sequence" / f"{pid}.wsd", "title X\n")
 
     run(output_dir=out, webapp_dir=web, approvals_file=tmp_path / "missing.yaml")
 
@@ -276,108 +266,7 @@ def test_run_no_approvals_file_means_nothing_approved(tmp_path: pathlib.Path) ->
     assert detail["approval"] is None
 
 
-def test_extract_sd_overlay_parses_pids_deadlines_refs() -> None:
-    html = (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50" viewBox="0 0 100 50">'
-        "<g>glyphs</g>"
-        '<rect class="dl-box pid-hit" x="10.0" y="10.0" width="50.0" height="9.0" '
-        'fill="transparent" pointer-events="all" data-nr="1" data-pids="17118,17129"/>'
-        '<rect class="dl-ref" x="5.0" y="2.0" width="8.0" height="6.0" data-refnr="2"/>'
-        "</svg>"
-        '<script id="deadline-data" type="application/json">'
-        '{"1": {"type": "unverzüglich", "pretty": "Unverzüglich", "raw": "r", '
-        '"ref_step": null, "ref_message": null}}</script>'
-        '<script>const PRE = "https://ahb/FV/"; const SUF = "";</script>'
-    )
-    ov = extract_sd_overlay(html)
-    assert ov is not None
-    assert ov["w"] == 100 and ov["h"] == 50
-    assert ov["ahbBase"] == "https://ahb/FV/"
-    assert ov["pids"] == [{"nr": 1, "pids": [17118, 17129], "x": 10.0, "y": 10.0, "w": 50.0, "h": 9.0}]
-    assert ov["refs"] == [{"refnr": 2, "x": 5.0, "y": 2.0, "w": 8.0, "h": 6.0}]
-    assert ov["deadlines"]["1"]["pretty"] == "Unverzüglich"
-
-
-def test_extract_sd_overlay_none_when_no_overlays() -> None:
-    assert extract_sd_overlay('<svg viewBox="0 0 10 10"><g>x</g></svg>') is None
-
-
-def test_extract_sd_overlay_combined_rect_is_single_hit_not_duplicated() -> None:
-    html = (
-        '<svg viewBox="0 0 100 50">'
-        '<rect class="dl-box pid-hit dl-ref" x="1" y="2" width="3" height="4" '
-        'data-nr="3" data-pids="21007" data-refnr="2"/>'
-        '<rect class="dl-ref" x="5" y="6" width="7" height="8" data-refnr="9"/>'
-        "</svg>"
-    )
-    ov = extract_sd_overlay(html)
-    assert ov is not None
-    # combined rect -> one pid hit carrying refnr (NOT also a standalone ref)
-    assert ov["pids"] == [{"nr": 3, "pids": [21007], "x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0, "refnr": 2}]
-    # only the pure dl-ref becomes a standalone ref
-    assert ov["refs"] == [{"refnr": 9, "x": 5.0, "y": 6.0, "w": 7.0, "h": 8.0}]
-
-
-def test_extract_sd_overlay_parses_ref_hit_into_reflinks() -> None:
-    html = (
-        '<svg viewBox="0 0 100 50">'
-        '<rect class="dl-box ref-hit" x="10" y="20" width="30" height="9" '
-        'data-nr="7" data-ref-uc="ziel" data-ref-sd="vom_nb"/>'
-        "</svg>"
-    )
-    ov = extract_sd_overlay(html)
-    assert ov is not None
-    # ref-only viewer still produces an overlay (not None) ...
-    assert ov is not None
-    # ... and the ref-hit rect lands in refLinks (no pids/refs/deadlines).
-    assert ov["refLinks"] == [{"nr": 7, "uc": "ziel", "sd": "vom_nb", "x": 10.0, "y": 20.0, "w": 30.0, "h": 9.0}]
-    assert ov["pids"] == [] and ov["refs"] == [] and ov["deadlines"] == {}
-
-
-def test_extract_sd_overlay_combined_pid_ref_hit_in_both_lists() -> None:
-    html = (
-        '<svg viewBox="0 0 100 50">'
-        '<rect class="dl-box pid-hit ref-hit" x="1" y="2" width="3" height="4" '
-        'data-nr="5" data-pids="21007" data-ref-uc="quelle" data-ref-sd="an_lf"/>'
-        "</svg>"
-    )
-    ov = extract_sd_overlay(html)
-    assert ov is not None
-    # the SAME rect appears in pids (by nr, with its pids) ...
-    assert ov["pids"] == [{"nr": 5, "pids": [21007], "x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0}]
-    # ... AND in refLinks (with uc/sd).
-    assert ov["refLinks"] == [{"nr": 5, "uc": "quelle", "sd": "an_lf", "x": 1.0, "y": 2.0, "w": 3.0, "h": 4.0}]
-
-
-def test_extract_sd_overlay_ref_hit_empty_sd_kept() -> None:
-    html = (
-        '<svg viewBox="0 0 100 50">'
-        '<rect class="ref-hit" x="0" y="0" width="2" height="2" '
-        'data-nr="3" data-ref-uc="ziel" data-ref-sd=""/>'
-        "</svg>"
-    )
-    ov = extract_sd_overlay(html)
-    assert ov is not None
-    assert ov["refLinks"] == [{"nr": 3, "uc": "ziel", "sd": "", "x": 0.0, "y": 0.0, "w": 2.0, "h": 2.0}]
-
-
-def test_extract_sd_overlay_reflinks_empty_when_no_ref_hits() -> None:
-    html = (
-        '<svg viewBox="0 0 100 50">'
-        '<rect class="dl-box pid-hit" x="10" y="10" width="50" height="9" '
-        'data-nr="1" data-pids="17118"/>'
-        '<rect class="dl-ref" x="5" y="2" width="8" height="6" data-refnr="2"/>'
-        "</svg>"
-    )
-    ov = extract_sd_overlay(html)
-    assert ov is not None
-    assert ov["refLinks"] == []
-    # existing behavior unchanged
-    assert ov["pids"] == [{"nr": 1, "pids": [17118], "x": 10.0, "y": 10.0, "w": 50.0, "h": 9.0}]
-    assert ov["refs"] == [{"refnr": 2, "x": 5.0, "y": 2.0, "w": 8.0, "h": 6.0}]
-
-
-# --- per-SD diagrams[] (Task 3.1) -------------------------------------------
+# --- per-SD diagrams[] ------------------------------------------------------
 
 
 def test_build_index_entry_sd_count_counts_diagrams() -> None:
@@ -410,8 +299,8 @@ def test_build_detail_emits_per_diagram_list_for_multi_sd() -> None:
         {"nr": 1, "pid": 11002, "name": None, "message": None, "format": None},
         {"nr": 1, "pid": 11003, "name": None, "message": None, "format": None},
     ]
-    # overlay is attached by run(), not build_detail; no approval added (Task 3.5)
-    assert "overlay" not in d0 and "overlay" not in d1
+    # the approval is attached by run(), where the filesystem is
+    assert "approval" not in d0 and "approval" not in d1
     assert "approval" not in d0
     # back-compat: top-level fields mirror the primary (diagrams[0])
     assert detail["steps"] == TWO_SD["diagrams"][0]["steps"]
@@ -434,23 +323,14 @@ def test_build_detail_fallback_wraps_legacy_sequence_diagram() -> None:
     assert detail["deadlines"] == [{"nr": 1, "deadline": "Unverzüglich", "rule": None}]
 
 
-def _overlay_html(w: int, h: int, nr: int, pid: int) -> str:
-    return (
-        f'<svg viewBox="0 0 {w} {h}"><rect class="pid-hit" x="1" y="2" '
-        f'width="3" height="4" data-nr="{nr}" data-pids="{pid}"/></svg>'
-    )
-
-
 def test_run_emits_per_sd_diagrams_and_copies_all_svgs(tmp_path: pathlib.Path) -> None:
     out = tmp_path / "output"
     web = tmp_path / "webapp"
     pid = "wechsel"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
-    # per-SD svg + html for BOTH diagrams (keyed by {uc}__{slug})
+    # per-SD svg for BOTH diagrams (keyed by {uc}__{slug})
     _write(out / "sequence_svg" / f"{pid}__lieferant.svg", "<svg>lf</svg>")
     _write(out / "sequence_svg" / f"{pid}__netzbetreiber.svg", "<svg>nb</svg>")
-    _write(out / "sequence_svg" / f"{pid}__lieferant.html", _overlay_html(100, 50, 1, 11001))
-    _write(out / "sequence_svg" / f"{pid}__netzbetreiber.html", _overlay_html(80, 40, 1, 11002))
 
     assert run(output_dir=out, webapp_dir=web) == 1
 
@@ -463,9 +343,6 @@ def test_run_emits_per_sd_diagrams_and_copies_all_svgs(tmp_path: pathlib.Path) -
     d0, d1 = detail["diagrams"]
     assert d0["svg"] == "/diagrams/sequence/wechsel__lieferant.svg"
     assert d1["svg"] == "/diagrams/sequence/wechsel__netzbetreiber.svg"
-    # overlay attached from each diagram's own .html
-    assert d0["overlay"]["w"] == 100 and d0["overlay"]["pids"][0]["pids"] == [11001]
-    assert d1["overlay"]["w"] == 80 and d1["overlay"]["pids"][0]["pids"] == [11002]
     # per-diagram deadlines/pids reflect each diagram's own steps
     assert d0["deadlines"] == [{"nr": 1, "deadline": "Unverzüglich", "rule": None}]
     assert d1["pids"] == [
@@ -484,7 +361,6 @@ def test_run_single_sd_fallback_diagrams_and_back_compat(tmp_path: pathlib.Path)
     pid = "abstimmung_der_netzzeitreihe"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
     _write(out / "sequence_svg" / f"{pid}.svg", "<svg>seq</svg>")
-    _write(out / "sequence_svg" / f"{pid}.html", _overlay_html(120, 60, 1, 55001))
 
     run(output_dir=out, webapp_dir=web)
 
@@ -495,10 +371,6 @@ def test_run_single_sd_fallback_diagrams_and_back_compat(tmp_path: pathlib.Path)
     d = detail["diagrams"][0]
     assert d["slug"] == "" and d["name"] is None
     assert d["svg"] == f"/diagrams/sequence/{pid}.svg"
-    # single-SD key == pid, so the diagram overlay AND the back-compat sdOverlay
-    # are both attached from the same {pid}.html
-    assert d["overlay"]["w"] == 120
-    assert detail["sdOverlay"]["w"] == 120
     # back-compat top-level fields still present
     assert detail["steps"] == SAMPLE["sequence_diagram"]["steps"]
     assert detail["participants"] == ["NB", "ÜNB"]
@@ -533,21 +405,28 @@ def test_index_pids_and_participants_union_across_all_sds() -> None:
     assert entry["participants"] == ["LF", "NB"]
 
 
-def test_run_review_notes_aggregate_from_non_primary_sd_wsd(tmp_path: pathlib.Path) -> None:
-    # A [REVIEW] note living ONLY in a non-primary {pid}__{slug}.wsd must still
-    # surface in detail reviewNotes and flip the index hasReview flag.
+def test_run_review_items_aggregate_from_a_non_primary_variant(tmp_path: pathlib.Path) -> None:
+    """A worklist entry earned by a NON-primary variant's step must still reach the process.
+
+    The old build could only find one by grepping that variant's own `.wsd`; the item is now
+    derived per diagram, and carries the step number a note could not.
+    """
     out = tmp_path / "output"
     web = tmp_path / "webapp"
     pid = "wechsel"
-    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    two_sd = copy.deepcopy(TWO_SD)
+    two_sd["diagrams"][1]["steps"][0]["deadline_rule"] = {"type": "complex", "raw": "Frist Variante."}
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(two_sd, allow_unicode=True))
     _write(out / "sequence_svg" / f"{pid}__lieferant.svg", "<svg>lf</svg>")
     _write(out / "sequence_svg" / f"{pid}__netzbetreiber.svg", "<svg>nb</svg>")
-    _write(out / "sequence" / f"{pid}__netzbetreiber.wsd", "note right of NB: (!) Frist Variante  [REVIEW]\n")
 
     run(output_dir=out, webapp_dir=web)
 
     detail = json.loads((web / f"src/data/processes/{pid}.json").read_text("utf-8"))
-    assert detail["reviewNotes"] == ["(!) Frist Variante"]
+    assert detail["reviewNotes"] == ["Frist Variante."]
+    assert detail["reviewItems"] == [
+        {"kind": "deadline_unstructured", "severity": "structure", "step": 1, "text": "Frist Variante."}
+    ]
     index = {e["id"]: e for e in json.loads((web / "src/data/processes.json").read_text("utf-8"))}
     assert index[pid]["hasReview"] is True
 
@@ -580,24 +459,20 @@ def test_index_has_deadlines_aggregates_from_non_primary_sd() -> None:
 
 
 def test_run_per_sd_partial_approval_is_not_fully_approved(tmp_path: pathlib.Path) -> None:
-    # A 2-SD process where only ONE variant's {key}.wsd hash matches an approval:
+    # A 2-SD process where only ONE variant's hash matches an approval:
     # that diagram gets a non-null approval, the other stays null, and the index
     # "approved" flag is False (not fully approved).
     out = tmp_path / "output"
     web = tmp_path / "webapp"
     pid = "wechsel"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
-    lf_wsd = "title Wechsel (LF)\nLF->NB: msg\n"
-    nb_wsd = "title Wechsel (NB)\nNB->LF: msg\n"
-    _write(out / "sequence" / f"{pid}__lieferant.wsd", lf_wsd)
-    _write(out / "sequence" / f"{pid}__netzbetreiber.wsd", nb_wsd)
     _write(out / "sequence_svg" / f"{pid}__lieferant.svg", "<svg>lf</svg>")
     _write(out / "sequence_svg" / f"{pid}__netzbetreiber.svg", "<svg>nb</svg>")
-    # only the lieferant variant is approved (hash matches its current .wsd)
+    # only the lieferant variant is approved (hash matches its current source)
     approvals = {
         "approvals": {
             f"{pid}__lieferant": {
-                "sha256": sd_source_hash(lf_wsd),
+                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__lieferant") or ""),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
@@ -627,14 +502,12 @@ def test_run_single_sd_approval_back_compat(tmp_path: pathlib.Path) -> None:
     out = tmp_path / "output"
     web = tmp_path / "webapp"
     pid = "abstimmung_der_netzzeitreihe"
-    wsd_text = "title Anmeldung\nNB->ÜNB: Anmeldung\n"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
     _write(out / "sequence_svg" / f"{pid}.svg", "<svg>seq</svg>")
-    _write(out / "sequence" / f"{pid}.wsd", wsd_text)
     approvals = {
         "approvals": {
             pid: {
-                "sha256": sd_source_hash(wsd_text),
+                "sha256": sd_source_hash(diagram_source_text(out, pid) or ""),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
                 "note": "ok",
@@ -655,27 +528,23 @@ def test_run_single_sd_approval_back_compat(tmp_path: pathlib.Path) -> None:
 
 
 def test_run_per_sd_full_approval_marks_index_approved(tmp_path: pathlib.Path) -> None:
-    # Both renderable variants approved (each {key}.wsd hash matches its entry):
+    # Both renderable variants approved (each diagram's hash matches its entry):
     # every diagram gets an approval and the index "approved" flag is True.
     out = tmp_path / "output"
     web = tmp_path / "webapp"
     pid = "wechsel"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
-    lf_wsd = "title Wechsel (LF)\nLF->NB: msg\n"
-    nb_wsd = "title Wechsel (NB)\nNB->LF: msg\n"
-    _write(out / "sequence" / f"{pid}__lieferant.wsd", lf_wsd)
-    _write(out / "sequence" / f"{pid}__netzbetreiber.wsd", nb_wsd)
     _write(out / "sequence_svg" / f"{pid}__lieferant.svg", "<svg>lf</svg>")
     _write(out / "sequence_svg" / f"{pid}__netzbetreiber.svg", "<svg>nb</svg>")
     approvals = {
         "approvals": {
             f"{pid}__lieferant": {
-                "sha256": sd_source_hash(lf_wsd),
+                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__lieferant") or ""),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
             f"{pid}__netzbetreiber": {
-                "sha256": sd_source_hash(nb_wsd),
+                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__netzbetreiber") or ""),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
@@ -695,7 +564,7 @@ def test_run_per_sd_full_approval_marks_index_approved(tmp_path: pathlib.Path) -
 
 
 def test_run_counts_stale_on_hash_mismatch_with_steps(tmp_path: pathlib.Path, capsys: Any) -> None:
-    # An approval entry whose {key}.wsd exists but no longer hashes to the stamped
+    # An approval entry whose diagram exists but no longer hashes to the stamped
     # value: the diagram's approval is null AND the entry is counted stale. (The
     # other stale fixture is stepless and never exercises this mismatch path.)
     # Edge: a stepless PRIMARY can diverge (no renderable diagram → not "approved")
@@ -705,7 +574,6 @@ def test_run_counts_stale_on_hash_mismatch_with_steps(tmp_path: pathlib.Path, ca
     pid = "abstimmung_der_netzzeitreihe"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
     _write(out / "sequence_svg" / f"{pid}.svg", "<svg>seq</svg>")
-    _write(out / "sequence" / f"{pid}.wsd", "title NEW\nNB->ÜNB: changed\n")
     approvals = {
         "approvals": {
             pid: {
@@ -736,7 +604,6 @@ def test_run_reports_orphaned_approval_entries(tmp_path: pathlib.Path, capsys: A
     pid = "abstimmung_der_netzzeitreihe"
     _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
     _write(out / "sequence_svg" / f"{pid}.svg", "<svg>seq</svg>")
-    _write(out / "sequence" / f"{pid}.wsd", "title X\n")
     approvals = {
         "approvals": {"ghost__variant": {"sha256": "deadbeef", "approved_by": "A", "approved_at": "2026-01-01"}}
     }
@@ -1188,3 +1055,63 @@ def test_the_names_are_sorted_not_left_in_row_order() -> None:
         has_sequence=True,
     )
     assert entry["pidNames"] == ["Ablehnung", "Bestätigung", "Wechselanfrage", "Zustimmung"]
+
+
+def test_export_makrake_inputs_writes_one_render_input_per_diagram(tmp_path: pathlib.Path) -> None:
+    """What replaced `output/sequence/*.wsd` — and unlike the `.wsd`, not a committed
+    artifact: it is derivable from `output/yaml` plus `sd_ref_links.yaml`, so the pipeline
+    writes it to a scratch dir, renders it and throws it away.
+
+    The files are named by artifact key, because that is the stem makrake writes its SVG to
+    and the `{process_id}` its links resolve.
+    """
+    out = tmp_path / "output"
+    dest = tmp_path / "build" / "makrake"
+    _write(out / "yaml" / "wechsel.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+
+    assert export_makrake_inputs(output_dir=out, dest=dest) == 2
+    assert sorted(p.name for p in dest.glob("*.json")) == ["wechsel__lieferant.json", "wechsel__netzbetreiber.json"]
+
+    payload = json.loads((dest / "wechsel__lieferant.json").read_text("utf-8"))
+    assert payload["id"] == "wechsel__lieferant"
+    # The title joins the process and the variant, so a switcher's diagrams are tellable apart.
+    assert payload["name"] == "Wechsel — aus Sicht Lieferant"
+    assert [s["number"] for s in payload["steps"]] == [1]
+    assert payload["steps"][0]["pids"] == [11001]
+
+
+def test_export_makrake_inputs_resolves_refs_across_processes(tmp_path: pathlib.Path) -> None:
+    """A `ref` names another process's SD, which may sort later — so resolution has to see
+    every process at once. This is the fact the `.wsd` could not carry at all."""
+    out = tmp_path / "output"
+    dest = tmp_path / "build"
+    referrer = {
+        "process": {"id": "aaa_referrer", "name": "Referrer", "category": "GPKE", "source": ""},
+        "use_case": {"roles": []},
+        "sequence_diagram": {
+            "participants": ["LF", "NB"],
+            "steps": [{"nr": 1, "sender": "LF", "receiver": "NB", "subprocess_ref": "Zielprozess"}],
+        },
+    }
+    target = {
+        "process": {"id": "zzz_target", "name": "Zielprozess", "category": "GPKE", "source": ""},
+        "use_case": {"roles": []},
+        "sequence_diagram": {"participants": ["NB"], "steps": [{"nr": 1, "sender": "NB", "receiver": "NB"}]},
+    }
+    _write(out / "yaml" / "aaa_referrer.yaml", yaml.safe_dump(referrer, allow_unicode=True))
+    _write(out / "yaml" / "zzz_target.yaml", yaml.safe_dump(target, allow_unicode=True))
+
+    export_makrake_inputs(output_dir=out, dest=dest)
+
+    payload = json.loads((dest / "aaa_referrer.json").read_text("utf-8"))
+    step = payload["steps"][0]
+    assert step["kind"] == "process_ref"
+    assert step["subprocess_ref_id"] == "zzz_target"
+
+
+def test_diagram_source_text_is_none_for_an_unknown_key(tmp_path: pathlib.Path) -> None:
+    """So a stale approval entry reads as "no source" rather than raising mid-build."""
+    out = tmp_path / "output"
+    _write(out / "yaml" / "wechsel.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    assert diagram_source_text(out, "wechsel__geloescht") is None
+    assert diagram_source_text(out, "wechsel__lieferant") is not None

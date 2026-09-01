@@ -5,6 +5,7 @@ import pytest
 
 from makoralle.models.deadline import Anchor, Deadline, DeadlineAlternative, Offset, Schedule
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
+from makoralle.review import Severity, review_items
 from makoralle.serialization.wsd import (
     _alternative_core,
     _deadline_note,
@@ -13,7 +14,6 @@ from makoralle.serialization.wsd import (
     _unverzueglich_sentence_beyond_the_tag,
     emit_wsd,
 )
-from makoralle.webapp_export import extract_review_notes
 
 AlternativeKind = Literal["immediate", "parallel", "scheduled", "reference", "complex"]
 
@@ -29,7 +29,7 @@ def test_deadline_note_complex_keeps_review_flag() -> None:
 
 def test_deadline_note_reference_is_info_without_review_flag() -> None:
     """A 'reference' deadline (real but irreducible) stays a note, but with an (i)
-    marker and NO [REVIEW] — so extract_review_notes never pulls it into review."""
+    marker and NO [REVIEW] — the worklist reports it as `uncheckable`, not as work to do."""
     note = _deadline_note(_step_with_deadline(DeadlineRule(type="reference", raw="Gemäß Rahmenvertrag.")), ["LF", "NB"])
     assert note == "note right of NB: (i) Frist: Gemäß Rahmenvertrag."
     assert "[REVIEW]" not in note
@@ -1098,14 +1098,23 @@ def test_the_note_lands_inside_the_fragment_the_step_belongs_to() -> None:
     assert lines.index("alt Werte benötigt") < note_idx < lines.index("end")
 
 
-def test_a_review_note_from_an_unread_endpoint_reaches_the_worklist() -> None:
-    """End to end with the consumer: ``extract_review_notes`` builds the "Prüfung nötig"
-    list the webapp shows, and an unread endpoint belongs on it."""
-    sd = SequenceDiagram(
-        participants=["MSB"],
-        steps=[SDStep(nr=10, sender="MSB", receiver="?", message="Mitteilung über Gesamtvorgang")],
-    )
-    assert extract_review_notes(emit_wsd(sd)) == ["(!) 10. Mitteilung über Gesamtvorgang — Gegenstelle ungelesen"]
+def test_an_unread_endpoint_reaches_the_worklist() -> None:
+    """End to end with the consumer: an unread endpoint belongs on the "Prüfung nötig" list.
+
+    The list comes from :func:`makoralle.review.review_items` now rather than from grepping
+    this emitter's output, so the note below and the worklist entry are two independent
+    renderings of one model fact — which is the point. ``emit_wsd`` still draws the note,
+    because p06's Vision refine pass shows the reconstruction back to the model and an
+    unplaced step has to be visible in it.
+    """
+    step = SDStep(nr=10, sender="MSB", receiver="?", message="Mitteilung über Gesamtvorgang")
+    sd = SequenceDiagram(participants=["MSB"], steps=[step])
+    assert "[REVIEW]" in emit_wsd(sd)
+
+    items = review_items({"participants": ["MSB"], "steps": [step.model_dump()]})
+    assert [(i.kind, i.severity, i.step, i.text) for i in items] == [
+        ("endpoint_unread", Severity.DEFECT, 10, "Mitteilung über Gesamtvorgang — Gegenstelle ungelesen")
+    ]
 
 
 def test_a_span_names_two_lanes_however_many_are_declared() -> None:
@@ -1329,7 +1338,7 @@ def test_an_unplaceable_step_keeps_its_unstructured_frist(caplog: pytest.LogCapt
     ``_deadline_note`` anchors on a lifeline, and a step with neither endpoint read has none — so
     it returned ``None`` and the raw Frist text was dropped without a word. That text is the whole
     point: it is unstructured *because* a human still has to structure it, and it is exactly what
-    ``extract_review_notes`` puts on the "Prüfung nötig" worklist. So it spans the diagram with the
+    the worklist reports for the step. So it spans the diagram with the
     step it belongs to.
     """
     sd = SequenceDiagram(
@@ -1365,7 +1374,18 @@ def test_an_unplaceable_frist_reaches_the_worklist() -> None:
             )
         ],
     )
-    assert "(!) Frist: unverzüglich, jedoch spätester ÜT ist der 5. WT" in extract_review_notes(emit_wsd(sd))
+    # Drawn as a flagged, spanning note, because a step with no readable endpoint still has
+    # to be visible in the reconstruction p06 shows back to the model...
+    assert "note over NB,MSB: (!) Frist: unverzüglich, jedoch spätester ÜT ist der 5. WT  [REVIEW]" in (
+        emit_wsd(sd).splitlines()
+    )
+    # ...and on the worklist, which is what a human acts on. Independently derived, and it
+    # carries the step number the note cannot.
+    items = review_items({"participants": ["NB", "MSB"], "steps": [sd.steps[0].model_dump()]})
+    assert [(i.kind, i.severity, i.step) for i in items] == [
+        ("endpoints_unread", Severity.DEFECT, 1),
+        ("deadline_unstructured", Severity.STRUCTURE, 1),
+    ]
 
 
 def test_an_unplaceable_reference_frist_stays_unflagged_when_it_spans() -> None:
@@ -1385,7 +1405,11 @@ def test_an_unplaceable_reference_frist_stays_unflagged_when_it_spans() -> None:
     )
     lines = emit_wsd(sd).splitlines()
     assert "note over NB,MSB: (i) Frist: siehe Vertrag" in lines
-    assert not [note for note in extract_review_notes(emit_wsd(sd)) if "Vertrag" in note]
+    # `reference` is real but irreducible, so it is uncheckable rather than somebody's task:
+    # the note stays unflagged and the worklist entry says `uncheckable`, not `structure`.
+    items = review_items({"participants": ["NB", "MSB"], "steps": [sd.steps[0].model_dump()]})
+    assert ("deadline_reference", Severity.UNCHECKABLE) in [(i.kind, i.severity) for i in items]
+    assert Severity.STRUCTURE not in [i.severity for i in items]
 
 
 def test_a_frist_with_no_lane_at_all_is_dropped_loudly(caplog: pytest.LogCaptureFixture) -> None:
