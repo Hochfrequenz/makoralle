@@ -521,6 +521,23 @@ def test_alternative_core_renders_the_shape_the_parser_will_fill() -> None:
     lookup with "werktage". They are here for makoralle#57 step 3, and pinned now so the shape
     is a decision rather than whatever falls out later.
     """
+    # BOTH an immediacy anchor and a bound, which is the pairing the flat rule cannot express
+    # at all and the whole reason `Deadline` exists: "unverzüglich nach dem ÜZ von Nr. 1, jedoch
+    # spätester ÜT ist der 2. WT nach dem ÜT von Nr. 3". The obligation and what it is measured
+    # from come first, then the bound — the order matters, since "u ≤2WT nach ÜT#3 ÜZ#1" would
+    # read as one bound with two anchors.
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="immediate",
+                immediacy=Anchor(kind="step", steps=[1], event="ÜZ"),
+                backstop=Schedule(
+                    anchor=Anchor(kind="step", steps=[3], event="ÜT"), offset=Offset(amount=2), subject="ÜT"
+                ),
+            )
+        )
+        == "u ÜZ#1 ≤2WT nach ÜT#3"
+    )
     # a disjunctive anchor: "Nr. 3 bzw. 4", which a single `reference_step` cannot hold
     assert (
         _alternative_core(
@@ -528,15 +545,17 @@ def test_alternative_core_renders_the_shape_the_parser_will_fill() -> None:
         )
         == "u ÜZ#3/4"
     )
-    # a unit that is not Werktage: `einrichtung_der_konfigurationen…` says "1 Stunde nach dem ÜZ
-    # von Nr. 1", which the flat `business_days` field can only misreport
+    # a unit that is not Werktage: `einrichtung_der_konfigurationen…` nr 2 says "jedoch spätester
+    # ÜZ ist 1 Stunde nach dem ÜZ von Nr. 1", which the flat rule does not misreport but simply
+    # drops — it leaves `business_days` None, so the tag is `{u}` and only the note carries it
     stunden = DeadlineAlternative(
         kind="scheduled",
         backstop=Schedule(anchor=Anchor(kind="step", steps=[1], event="ÜZ"), offset=Offset(amount=1, unit="stunden")),
     )
     assert _alternative_core(stunden) == ""  # scheduled routes to _terminiert_core off the rule
     assert _alternative_core(DeadlineAlternative(kind="immediate", backstop=stunden.backstop)) == "u ≤1h nach ÜZ#1"
-    # a coupling that is ALSO bounded — the flat rule drops whichever of the two it cannot hold
+    # a coupling renders the step and nothing else: "Parallel zu Nr. 3" is not "by Nr. 3", so a
+    # `≤` here would assert a hard date the source never stated
     assert (
         _alternative_core(
             DeadlineAlternative(
@@ -545,11 +564,85 @@ def test_alternative_core_renders_the_shape_the_parser_will_fill() -> None:
                 backstop=Schedule(anchor=Anchor(kind="unanchored"), latest_time="14:00"),
             )
         )
-        == "∥#2 ≤14:00"
+        == "∥#2"
+    )
+    # and it finds its step wherever `deadline_from_rule` filed it — under `backstop` once an
+    # offset is present, since that disambiguation was verified for `unverzüglich`, not for
+    # `parallel`
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="parallel",
+                immediacy=Anchor(kind="unanchored"),
+                backstop=Schedule(anchor=Anchor(kind="step", steps=[3]), offset=Offset(amount=2)),
+            )
+        )
+        == "∥#3"
+    )
+    # a recurrence prefixes the bound rather than replacing it — an earlier draft returned the
+    # recurrence alone here and discarded the offset with its anchor
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="immediate",
+                backstop=Schedule(
+                    anchor=Anchor(kind="step", steps=[3], event="ÜZ"),
+                    offset=Offset(amount=2),
+                    recurrence="täglich",
+                ),
+            )
+        )
+        == "u täglich ≤2WT nach ÜZ#3"
+    )
+    # a unit outside the Literal renders spelled out rather than taking the serializer down
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="immediate",
+                backstop=Schedule(
+                    anchor=Anchor(kind="unanchored"),
+                    offset=Offset.model_construct(amount=3, unit="monate", direction="nach"),
+                ),
+            )
+        )
+        == "u ≤3monate"
     )
     # prose branches carry nothing compact; `_deadline_note` is where they surface
     for kind in ("reference", "complex"):
         assert _alternative_core(DeadlineAlternative(kind=kind)) == ""
+
+
+def test_no_field_combination_renders_less_than_the_flat_tag_did() -> None:
+    """The shapes a review found silently dropping what the old tag showed.
+
+    None occurs at dataset v0.0.20 — all 28 `parallel` rules on the 906 basis carry only
+    `reference_step`, and 0 of the 414 `unverzüglich` rules set `anchor` — but the upstream is a
+    non-deterministic Vision stage, so "no row does" is not a reason to lose a field.
+    """
+    # a coupling whose step arrives with an anchor name: `deadline_from_rule` files the step as
+    # `established_by`, and for a coupling that step IS what the source named
+    coupled = DeadlineRule(type="parallel", reference_step=3, anchor="Zahlungsziel", raw="Parallel zu Nr. 3.")
+    assert _deadline_tag(coupled) == "{∥#3}"
+    # ... and one carrying an offset keeps its step too, with no invented `≤`
+    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=3, business_days=2, raw="x")) == "{∥#3}"
+    # a recurrence alongside an offset keeps both
+    both = DeadlineRule(
+        type="unverzüglich", business_days=2, reference_step=3, reference_event="ÜZ", recurring=True, raw="x"
+    )
+    assert _deadline_tag(both) == "{u täglich ≤2WT nach ÜZ#3}"
+    # an `unverzüglich` anchored to prose keeps the anchor out of the tag — but the note fires
+    # even though the clock is a bound, so the anchor survives somewhere
+    prose = DeadlineRule(
+        type="unverzüglich",
+        anchor="dem Abschluss des Entsperrauftrags",
+        latest_time="07:00",
+        raw="Unverzüglich, spätestens 07:00 Uhr nach dem Abschluss des Entsperrauftrags.",
+    )
+    assert _deadline_tag(prose) == "{u ≤07:00}"
+    assert _unverzueglich_sentence_beyond_the_tag(prose) == (
+        "spätestens 07:00 Uhr nach dem Abschluss des Entsperrauftrags"
+    )
+    assert _deadline_note(_step_with_deadline(prose), ["LF", "NB"]) is not None
 
 
 def test_tag_of_joins_every_alternative_of_a_conditional_frist() -> None:

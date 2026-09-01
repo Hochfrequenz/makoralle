@@ -265,7 +265,15 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     steps = sd.get("steps", [])
     participants = sd.get("participants", [])
     types = {(s.get("deadline_rule") or {}).get("type") for s in steps}
-    has_tags = bool(types & {"unverzüglich", "parallel", "terminiert"})
+    # Per marker family, not one flag for all three. With a single `has_tags` a diagram whose
+    # only Frist is `terminiert` listed every `{u …}` form as well — one stale line before
+    # makoralle#59 split the `unverzüglich` entry into four, four after, which is why the split
+    # forced this. A legend that defines markers the diagram does not show teaches the reader to
+    # distrust it.
+    has_unverzueglich = "unverzüglich" in types
+    has_parallel = "parallel" in types
+    has_terminiert = "terminiert" in types
+    has_tags = has_unverzueglich or has_parallel or has_terminiert
     # Since makorele#101 a bare-tagged `unverzüglich` whose sentence says more also renders as an
     # unflagged `(i)` note, so keying this entry on the `reference` type alone would leave 107 of
     # the 228 shipped diagrams showing an `(i)` marker the legend does not define — the same
@@ -290,22 +298,32 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     if not (has_tags or has_reference or has_complex or has_unread_endpoint):
         return []
     lines = ["**Fristen (Legende der Diagramm-Markierungen):**", ""]
-    if has_tags:
+    if has_unverzueglich:
         lines += [
             "- `{u}` — unverzüglich",
-            "- `{u ÜZ#N}` — unverzüglich nach dem ÜZ/ÜT von Schritt N",
+            # `{u #N}` is live: `verpflichtung_gmsb` nr 4 ("Unmittelbar nach Nr. 3.") has a step
+            # and no event, so an entry naming only the ÜZ/ÜT form would leave it undefined.
+            "- `{u #N}` / `{u ÜZ#N}` — unverzüglich nach (dem ÜZ/ÜT von) Schritt N",
             # Since makoralle#59 the `u` always leads an `unverzüglich` tag and a `≤` marks the
             # bound, so the old "`{≤HH:MM nWT ÜZ#N}`" entry named a form the diagrams no longer
             # show — and it defined the bound as if it were the obligation, which is the defect
             # #59 fixed on the arrows themselves.
             "- `{u ≤nWT nach ÜZ#N}` — unverzüglich, spätestens n Werktage nach dem ÜZ/ÜT von Schritt N",
             "- `{u ≤HH:MM nWT nach ÜZ#N}` — dieselbe Frist mit spätester Uhrzeit",
-            "- `{∥#N}` — parallel zu Schritt N",
+        ]
+    if has_parallel:
+        # `{∥}` ships where the source names no single step — `beendigung_einer_konfiguration_vom_msb`
+        # nr 3, "Parallel zu Nr. 1 oder 2.", whose disjunction the flat rule cannot hold.
+        lines.append("- `{∥#N}` / `{∥}` — parallel zu Schritt N (bzw. zu einem der genannten Schritte)")
+    if has_terminiert:
+        lines += [
             "- `{≤nWT vor|nach Anker}` — terminierte Frist, n Werktage vor/nach einem Termin "
-            "(z. B. Zahlungsziel, Änderungstermin)",
-            # 6 rules at dataset v0.0.20 render one of these and the legend defined neither —
+            "(z. B. Zahlungsziel, Änderungstermin); der Anker kann auch ein Schritt sein (`≤nWT nach #N`)",
+            # On the 906 `diagrams[]` basis at v0.0.20, 5 rows ship the bare-anchor form (all
+            # `{≤Zahlungsziel}`) and 6 a recurring one, and the legend defined neither —
             # `übermittlung_der_täglichen_ausfallarbeitsüberführungszeitreihe` nr 1 ships
             # `{täglich ≤14:00}` on its shipped .wsd today.
+            "- `{≤Anker}` — spätestens zu einem Termin ohne Fristangabe (z. B. `{≤Zahlungsziel}`)",
             "- `{täglich ≤HH:MM}` / `{werktäglich ≤HH:MM}` — wiederkehrende Frist, täglich bzw. "
             "werktäglich bis spätestens HH:MM",
         ]

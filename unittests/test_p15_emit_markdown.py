@@ -117,6 +117,35 @@ def test_deadline_legend_explains_vocabulary() -> None:
     assert "ÜZ" in text or "ÜT" in text
 
 
+def test_deadline_legend_lists_only_the_marker_families_the_diagram_shows() -> None:
+    """makoralle#59: one `has_tags` flag for all three families made a `terminiert`-only diagram
+    define every `{u …}` form as well — one stale line before #59 split the `unverzüglich` entry
+    into four, four after. A legend that defines markers the diagram does not show teaches the
+    reader to distrust it.
+    """
+    terminiert = "\n".join(
+        _deadline_legend({"steps": [{"nr": 1, "deadline_rule": {"type": "terminiert", "anchor": "Zahlungsziel"}}]})
+    )
+    assert "{u" not in terminiert
+    assert "∥" not in terminiert
+    assert "{≤Zahlungsziel}" in terminiert  # the bare-anchor form this very diagram renders
+
+    unverzueglich = "\n".join(
+        _deadline_legend({"steps": [{"nr": 1, "deadline_rule": {"type": "unverzüglich", "reference_step": 3}}]})
+    )
+    assert "∥" not in unverzueglich
+    assert "terminierte Frist" not in unverzueglich
+    # `{u #N}` is live — `verpflichtung_gmsb` nr 4 ("Unmittelbar nach Nr. 3.") has a step and no
+    # event, so an entry naming only the ÜZ/ÜT form would leave that arrow undefined
+    assert "`{u #N}`" in unverzueglich
+
+    parallel = "\n".join(_deadline_legend({"steps": [{"nr": 1, "deadline_rule": {"type": "parallel"}}]}))
+    assert "{u" not in parallel
+    # `{∥}` ships where the source names no single step (`beendigung_einer_konfiguration_vom_msb`
+    # nr 3, "Parallel zu Nr. 1 oder 2.")
+    assert "`{∥}`" in parallel
+
+
 def test_deadline_legend_emitted_for_terminiert() -> None:
     sd = {"steps": [{"nr": 1, "deadline_rule": {"type": "terminiert", "anchor": "Zahlungsziel"}}]}
     text = "\n".join(_deadline_legend(sd))

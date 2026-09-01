@@ -32,31 +32,45 @@ def _arrow(step: SDStep) -> str:
 
 #: How an offset's unit is abbreviated on an arrow. Only ``werktage`` occurs at dataset
 #: v0.0.20 — the flat ``DeadlineRule`` has no unit field at all, so :func:`deadline_from_rule`
-#: can produce nothing else — but ``Offset`` carries the other two for makoralle#57 step 3, and
-#: a renderer that met one would otherwise have to guess or crash.
+#: can produce nothing else — but ``Offset`` carries the other two for makoralle#57 step 3.
+#: Read through :func:`_unit` rather than indexed, so that widening ``Offset.unit`` cannot take
+#: the serializer down: a unit spelled out in full is ugly, a KeyError mid-diagram is worse.
 _UNIT_ABBREVIATION = {"werktage": "WT", "kalendertage": "KT", "stunden": "h"}
 
 
-def _step_anchor_tag(anchor: Anchor | None) -> str:
+def _unit(unit: str) -> str:
+    return _UNIT_ABBREVIATION.get(unit, unit)
+
+
+def _step_anchor_tag(anchor: Anchor | None, *, or_establishing_step: bool = False) -> str:
     """The compact ``[event]#nr`` form of an anchor, or "" for one the arrow cannot carry.
 
     Only a ``step`` anchor goes on the label. An ``external`` one is prose — 63 characters
     for "dem andernfalls erforderlichen Versand der BG-SZR (Kategorie B)", and longer
     elsewhere in the corpus — so it stays in the note, for the reason
-    :func:`_unverzueglich_sentence_beyond_the_tag` sets out. For every such rule in the
-    corpus the note does fire and carries the whole sentence, because 0 of the 414
-    ``unverzüglich`` rules at v0.0.20 set ``DeadlineRule.anchor`` at all, so no external
-    anchor coexists with a bound. It is not a guarantee: an ``unverzüglich`` naming both a
-    prose anchor and a clock would drop the anchor from the tag *and* from the note, since
-    the clock is a bound and the note keys on their absence. The parser cannot emit that
-    shape today; #57 step 3, which can, has to carry the check.
+    :func:`_unverzueglich_sentence_beyond_the_tag` sets out, and
+    :func:`_holds_a_prose_anchor` makes the note fire for it even when the row also states a
+    bound. 0 of the 414 ``unverzüglich`` rules at v0.0.20 set ``DeadlineRule.anchor`` at all,
+    so no shipped row reaches either path.
+
+    ``or_establishing_step`` is for a ``parallel`` alternative only. Where the flat rule names
+    a step *and* an anchor, ``deadline_from_rule`` files the step as ``established_by`` — for
+    an ``unverzüglich`` bound that step says where the anchor's *value* came from and is not
+    what the offset is measured from (`beginn_messstellenbetrieb` nr 16, "der 11. WT nach dem
+    **in Nr. 2** vom NB bestätigten Zuordnungsbeginn"), so rendering it as the anchor would
+    assert something the source does not. For a coupling there is no such distinction: "Parallel
+    zu Nr. 3" names the step and nothing else, so it is rendered.
 
     ``steps`` joins on "/" because the source says "Nr. 3 bzw. 4". The flat rule cannot
     express that (all 442 ``unverzüglich`` and ``parallel`` rules at v0.0.20 hold at most one
     ``reference_step``), so like ``Offset.unit == "kalendertage"`` this branch is here for the
     parser of #57 step 3 rather than for anything this corpus produces.
     """
-    if anchor is None or anchor.kind != "step" or not anchor.steps:
+    if anchor is None:
+        return ""
+    if anchor.kind == "external" and or_establishing_step and anchor.established_by is not None:
+        return f"{anchor.event or ''}#{anchor.established_by}"
+    if anchor.kind != "step" or not anchor.steps:
         return ""
     return f"{anchor.event or ''}#{'/'.join(str(s) for s in anchor.steps)}"
 
@@ -64,8 +78,9 @@ def _step_anchor_tag(anchor: Anchor | None) -> str:
 def _backstop_core(sched: Schedule) -> str:
     """The ``≤``-led text of a hard date — "at the latest, *this*".
 
-    Reads clock, then offset, then anchor, which is the order the shipped tags already use
-    (``≤07:00 1WT ÜT#1``, on 14 rows at v0.0.20). The ``≤`` leads whichever piece comes
+    Reads clock, then offset, then anchor, which is the order the shipped tags already use:
+    ``≤07:00 1WT ÜT#1`` on 4 of the 906 ``diagrams[]`` rows at v0.0.20, and 14 of them carry
+    that clock-offset-step shape at some clock value. The ``≤`` leads whichever piece comes
     first, so a bound with no clock reads ``≤2WT nach ÜT#1``.
 
     Kept separate from :func:`_terminiert_core` on purpose. The two agree on the anchor and
@@ -74,11 +89,6 @@ def _backstop_core(sched: Schedule) -> str:
     here would rewrite all 23 of its shipped tags to settle a disagreement no corpus row
     exhibits; #59 is about the ``unverzüglich`` rows, so the older function keeps its 23.
     """
-    if sched.recurrence:
-        # A recurrence *is* the bound ("werktäglich bis 14:00"), so it replaces the offset
-        # rather than joining it — same reading as _terminiert_core, whose comment explains
-        # why the word is never shortened to "täglich".
-        return f"{sched.recurrence} ≤{sched.latest_time}" if sched.latest_time else sched.recurrence
     pieces: list[str] = []
     if sched.latest_time:
         pieces.append(sched.latest_time)
@@ -89,11 +99,20 @@ def _backstop_core(sched: Schedule) -> str:
         # already reads, and one vocabulary the legend can define beats three characters.
         # With no anchor it is dropped instead — "≤3WT nach" points at nothing, and a
         # preposition with no object reads as a truncation.
-        offset = f"{sched.offset.amount}{_UNIT_ABBREVIATION[sched.offset.unit]}"
+        offset = f"{sched.offset.amount}{_unit(sched.offset.unit)}"
         pieces.append(f"{offset} {sched.offset.direction}" if anchor else offset)
     if anchor:
         pieces.append(anchor)
-    return "≤" + " ".join(pieces) if pieces else ""
+    bound = "≤" + " ".join(pieces) if pieces else ""
+    if not sched.recurrence:
+        return bound
+    # The recurrence says how OFTEN the obligation recurs and the rest says by when, so it
+    # prefixes the bound instead of replacing it. An earlier draft returned here with the
+    # recurrence alone, which discarded the offset and its anchor whenever a rule carried
+    # both — no v0.0.20 rule does, and the upstream is a non-deterministic Vision stage, so
+    # "no row does" is not a reason to drop the field. `_terminiert_core` still does replace,
+    # and is left alone with the rest of `terminiert`.
+    return f"{sched.recurrence} {bound}" if bound else sched.recurrence
 
 
 def _alternative_core(alt: DeadlineAlternative) -> str:
@@ -108,14 +127,22 @@ def _alternative_core(alt: DeadlineAlternative) -> str:
     those to :func:`_terminiert_core` off the flat rule, for the reason
     :func:`_backstop_core` gives.
     """
-    if alt.kind == "immediate":
-        pieces = ["u", _step_anchor_tag(alt.immediacy)]
-    elif alt.kind == "parallel":
-        # No space: "{∥#2}" is the shipped form, and the marker reads as one token with the
-        # step it couples to.
-        pieces = [f"∥{_step_anchor_tag(alt.immediacy)}"]
-    else:
+    if alt.kind == "parallel":
+        # A coupling has one thing to say — which step it is tied to — and `≤` would assert a
+        # hard date the source never stated ("Parallel zu Nr. 3" is not "by Nr. 3"). So no
+        # backstop is rendered, and the coupled step is read from whichever slot holds it:
+        # `deadline_from_rule` files the anchor under `backstop` once an offset is present,
+        # and that disambiguation was corpus-verified for `unverzüglich`, not for `parallel`.
+        # `or_establishing_step` recovers the step from an external anchor, where for a
+        # coupling the step *is* what the source named. No space after the marker: "{∥#2}" is
+        # the shipped form, and it reads as one token with the step it couples to.
+        coupled = _step_anchor_tag(alt.immediacy, or_establishing_step=True) or _step_anchor_tag(
+            alt.backstop.anchor if alt.backstop else None, or_establishing_step=True
+        )
+        return f"∥{coupled}"
+    if alt.kind != "immediate":
         return ""
+    pieces = ["u", _step_anchor_tag(alt.immediacy)]
     if alt.backstop is not None:
         pieces.append(_backstop_core(alt.backstop))
     return " ".join(p for p in pieces if p)
@@ -242,9 +269,32 @@ def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
     if rule.type != "unverzüglich":
         return ""
     deadline = deadline_from_rule(rule)
-    if deadline is None or deadline.states_a_backstop:
+    if deadline is None:
+        return ""
+    if deadline.states_a_backstop and not _holds_a_prose_anchor(deadline):
         return ""
     return _UNVERZUEGLICH_MARKER.sub("", rule.raw or "").strip(" .;,!?")
+
+
+def _holds_a_prose_anchor(deadline: Deadline) -> bool:
+    """Whether any alternative is anchored to something only prose can say.
+
+    The second half of the note's job. A bound on the arrow answers "by when", so a row that
+    has one needs no note — unless what it is measured *from* is an ``external`` anchor, which
+    :func:`_step_anchor_tag` cannot put on a label. Without this a rule naming both a prose
+    anchor and a clock ("unverzüglich, spätestens 07:00 Uhr nach dem Abschluss des
+    Entsperrauftrags") would render ``{u ≤07:00}`` and drop the anchor from the tag *and* from
+    the note, which is the failure this whole change is about, one level down.
+
+    0 of the 414 ``unverzüglich`` rules at v0.0.20 set ``DeadlineRule.anchor``, so this fires
+    on no shipped row; ``deadline_from_rule`` can already build the shape, and #57 step 3's
+    parser is meant to.
+    """
+    for alt in deadline.alternatives:
+        for anchor in (alt.immediacy, alt.backstop.anchor if alt.backstop else None):
+            if anchor is not None and anchor.kind in ("external", "event") and not _step_anchor_tag(anchor):
+                return True
+    return False
 
 
 def _deadline_note(step: SDStep, known_lanes: list[str]) -> str | None:
