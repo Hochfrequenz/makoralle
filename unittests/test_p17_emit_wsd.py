@@ -1,15 +1,21 @@
 import logging
+from typing import Literal
 
 import pytest
 
+from makoralle.models.deadline import Anchor, Deadline, DeadlineAlternative, Offset, Schedule
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
 from makoralle.serialization.wsd import (
+    _alternative_core,
     _deadline_note,
     _deadline_tag,
+    _tag_of,
     _unverzueglich_sentence_beyond_the_tag,
     emit_wsd,
 )
 from makoralle.webapp_export import extract_review_notes
+
+AlternativeKind = Literal["immediate", "parallel", "scheduled", "reference", "complex"]
 
 
 def _step_with_deadline(rule: DeadlineRule) -> SDStep:
@@ -34,8 +40,8 @@ def test_deadline_note_terminiert_and_structured_get_no_note() -> None:
 
     `unverzüglich` used to be unconditional here and no longer is: the type is in the list only
     while its tag says everything the sentence does — a bare "Unverzüglich." or a row whose tag
-    carries a clock, working days or a step. Where the sentence says more, the note is the point
-    (makorele#101); `test_deadline_note_lossy_unverzueglich_gets_its_sentence` is that case.
+    states the bound. Where the sentence says more, the note is the point (makorele#101);
+    `test_deadline_note_lossy_unverzueglich_gets_its_sentence` is that case.
     """
     for t in ("terminiert", "parallel", "none"):
         assert _deadline_note(_step_with_deadline(DeadlineRule(type=t, raw="x")), ["LF", "NB"]) is None
@@ -45,11 +51,60 @@ def test_deadline_note_terminiert_and_structured_get_no_note() -> None:
         is None
     )
     # the tag carries the bound, so the note would repeat the arrow — one case per disjunct of the
-    # guard, because a fixture setting two of them lets each hide the other
-    for kwargs in ({"business_days": 1}, {"latest_time": "15:00"}, {"reference_step": 2}):
+    # guard, because a fixture setting two of them lets each hide the other. `reference_step` is
+    # NOT among them since #59: with no offset those fields are the immediacy anchor, not a
+    # bound, so the tag states no bound and the note is what carries it —
+    # `test_deadline_note_fires_when_the_tag_states_no_bound` is that case.
+    for kwargs in ({"business_days": 1}, {"latest_time": "15:00"}):
         structured = DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Nr. 2.", **kwargs)
         assert _unverzueglich_sentence_beyond_the_tag(structured) == ""
         assert _deadline_note(_step_with_deadline(structured), ["LF", "NB"]) is None
+
+
+def test_a_recurrence_alone_is_not_a_bound_and_still_earns_its_note() -> None:
+    """`Deadline.states_a_backstop` answers True for a schedule holding nothing but a recurrence,
+    which is the right answer to the model's question and the wrong one for the arrow: no `≤`
+    reaches the label, so the sentence is still the only place a bound could be.
+
+    A draft of #59 keyed the note on `states_a_backstop` and lost "nach Nr. 2" from the tag *and*
+    the note on this shape — a strict regression against the old `{u}` plus note. No v0.0.20 row
+    reaches it (all 6 recurring rows on the 906 basis are `terminiert`), which is exactly why it
+    needs a test rather than a corpus run.
+    """
+    rule = DeadlineRule(type="unverzüglich", recurring=True, raw="Unverzüglich nach Nr. 2.")
+    assert _deadline_tag(rule) == "{u täglich}"
+    assert _unverzueglich_sentence_beyond_the_tag(rule) == "nach Nr. 2"
+    assert _deadline_note(_step_with_deadline(rule), ["LF", "NB"]) == (
+        "note right of NB: (i) Frist: Unverzüglich nach Nr. 2."
+    )
+    # a recurrence beside a real bound is different: the `≤` is on the arrow, so no note
+    bounded = DeadlineRule(type="unverzüglich", recurring=True, latest_time="14:00", raw="Unverzüglich nach Nr. 2.")
+    assert _deadline_tag(bounded) == "{u täglich ≤14:00}"
+    assert _unverzueglich_sentence_beyond_the_tag(bounded) == ""
+
+
+def test_deadline_note_fires_when_the_tag_states_no_bound() -> None:
+    """#59: an `unverzüglich` whose fields describe the immediacy anchor states no bound, so the
+    sentence — where the bound and any condition actually live — becomes a note.
+
+    `abrechnung_einer_für_den_esa_erbrachten_leistung` nr 2 verbatim, one of the 27 rows at
+    dataset v0.0.20 whose tag carried an anchor and nothing else; before #59 the guard bailed on
+    `reference_step` and the bound was lost from both the arrow and the diagram.
+    """
+    rule = DeadlineRule(
+        type="unverzüglich",
+        reference_step=1,
+        reference_event="ÜZ",
+        raw="Unverzüglich nach dem ÜZ von Nr. 1, jedoch spätester ÜT ist der 4. WT vor dem "
+        "Zahlungsziel in der Rechnung.",
+    )
+    assert _deadline_tag(rule) == "{u ÜZ#1}"
+    assert _unverzueglich_sentence_beyond_the_tag(rule).startswith("nach dem ÜZ von Nr. 1, jedoch spätester ÜT")
+    # unflagged (i), like `reference`: the sentence is readable and real, just not compact
+    assert _deadline_note(_step_with_deadline(rule), ["LF", "NB"]) == (
+        "note right of NB: (i) Frist: Unverzüglich nach dem ÜZ von Nr. 1, jedoch spätester ÜT "
+        "ist der 4. WT vor dem Zahlungsziel in der Rechnung."
+    )
 
 
 def test_emit_flat() -> None:
@@ -438,15 +493,272 @@ def test_deadline_tag_parallel() -> None:
     assert _deadline_tag(DeadlineRule(type="parallel", raw="Parallel")) == "{∥}"
 
 
-def test_deadline_tag_unverzueglich_with_clock_omits_null_pieces() -> None:
+def test_deadline_tag_unverzueglich_keeps_the_u_and_marks_the_bound() -> None:
+    """#59: the obligation leads, the bound follows it.
+
+    Every one of these used to drop the `u` — the old code built the tag from whichever
+    structured fields were set and fell back to `{u}` only when none were, so 175 of the 414
+    `unverzüglich` rows at dataset v0.0.20 rendered an arrow that no longer said "unverzüglich".
+    """
     rule = DeadlineRule(
         type="unverzüglich", latest_time="07:00", business_days=1, reference_event="ÜZ", reference_step=5, raw="..."
     )
-    assert _deadline_tag(rule) == "{≤07:00 1WT ÜZ#5}"
+    assert _deadline_tag(rule) == "{u ≤07:00 1WT nach ÜZ#5}"
+    # an offset means the fields are the BOUND and the promptness duty is unanchored
+    # (`abrechnungsdaten_bilanzkreisabrechnung` nr 2, "Unverzüglich, jedoch spätester ÜT ist der
+    # 2. WT nach dem ÜT von Nr. 1.")
+    with_offset = DeadlineRule(type="unverzüglich", business_days=2, reference_event="ÜT", reference_step=1, raw="...")
+    assert _deadline_tag(with_offset) == "{u ≤2WT nach ÜT#1}"
+    # no offset means they are the immediacy ANCHOR, so no `≤` — the same two fields, read the
+    # other way round, which is the disambiguation `deadline_from_rule` owns
+    assert _deadline_tag(DeadlineRule(type="unverzüglich", reference_event="ÜT", reference_step=1, raw="...")) == (
+        "{u ÜT#1}"
+    )
     # only a reference step, no clock/event
-    assert _deadline_tag(DeadlineRule(type="unverzüglich", reference_step=5, raw="...")) == "{#5}"
-    # business days only
-    assert _deadline_tag(DeadlineRule(type="unverzüglich", business_days=3, raw="...")) == "{3WT}"
+    assert _deadline_tag(DeadlineRule(type="unverzüglich", reference_step=5, raw="...")) == "{u #5}"
+    # business days only: the direction is dropped with no anchor to point at, since "≤3WT nach"
+    # reads as a truncation
+    assert _deadline_tag(DeadlineRule(type="unverzüglich", business_days=3, raw="...")) == "{u ≤3WT}"
+    # a clock with no offset is a bound too
+    assert _deadline_tag(DeadlineRule(type="unverzüglich", latest_time="15:00", raw="...")) == "{u ≤15:00}"
+    # "vor" survives where the source states it
+    vor = DeadlineRule(type="unverzüglich", business_days=4, direction="vor", reference_step=1, raw="...")
+    assert _deadline_tag(vor) == "{u ≤4WT vor #1}"
+    # a recurrence prefixes the bound rather than replacing it — `_terminiert_core` does replace,
+    # and is left alone with the rest of `terminiert`
+    recurring = DeadlineRule(type="unverzüglich", recurring=True, recurrence="werktäglich", latest_time="14:00", raw="")
+    assert _deadline_tag(recurring) == "{u werktäglich ≤14:00}"
+
+
+def test_deadline_tag_unverzueglich_leaves_a_prose_anchor_to_the_note() -> None:
+    """An external anchor is prose — 63 characters for one of them in the corpus — so it stays
+    off the arrow and the note carries the whole sentence instead."""
+    rule = DeadlineRule(type="unverzüglich", anchor="Kenntnisnahme des Sachverhalts", raw="Unverzüglich nach Kenntnis.")
+    assert _deadline_tag(rule) == "{u}"
+    assert _unverzueglich_sentence_beyond_the_tag(rule) == "nach Kenntnis"
+
+
+def test_alternative_core_renders_the_shape_the_parser_will_fill() -> None:
+    """The parts of `Deadline` no flat rule can produce, which line coverage does not reach.
+
+    `deadline_from_rule` yields exactly one alternative, one step per anchor and only Werktage
+    on all 1601 rules at dataset v0.0.20, so every branch below runs in its trivial shape when
+    driven off a `DeadlineRule` — the join with one element, the "/" with one step, the unit
+    lookup with "werktage". They are here for makoralle#57 step 3, and pinned now so the shape
+    is a decision rather than whatever falls out later.
+    """
+    # BOTH an immediacy anchor and a bound, which is the pairing the flat rule cannot express
+    # at all and the whole reason `Deadline` exists: "unverzüglich nach dem ÜZ von Nr. 1, jedoch
+    # spätester ÜT ist der 2. WT nach dem ÜT von Nr. 3". The obligation and what it is measured
+    # from come first, then the bound — the order matters, since "u ≤2WT nach ÜT#3 ÜZ#1" would
+    # read as one bound with two anchors.
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="immediate",
+                immediacy=Anchor(kind="step", steps=[1], event="ÜZ"),
+                backstop=Schedule(
+                    anchor=Anchor(kind="step", steps=[3], event="ÜT"), offset=Offset(amount=2), subject="ÜT"
+                ),
+            )
+        )
+        == "u ÜZ#1 ≤2WT nach ÜT#3"
+    )
+    # a disjunctive anchor: "Nr. 3 bzw. 4", which a single `reference_step` cannot hold
+    assert (
+        _alternative_core(
+            DeadlineAlternative(kind="immediate", immediacy=Anchor(kind="step", steps=[3, 4], event="ÜZ"))
+        )
+        == "u ÜZ#3/4"
+    )
+    # a unit that is not Werktage: `einrichtung_der_konfigurationen…` nr 2 says "jedoch spätester
+    # ÜZ ist 1 Stunde nach dem ÜZ von Nr. 1", which the flat rule does not misreport but simply
+    # drops — it leaves `business_days` None, so the tag is `{u}` and only the note carries it
+    stunden = DeadlineAlternative(
+        kind="scheduled",
+        backstop=Schedule(anchor=Anchor(kind="step", steps=[1], event="ÜZ"), offset=Offset(amount=1, unit="stunden")),
+    )
+    # A `scheduled` alternative renders its bound. This used to assert `""` — pinning the gap a
+    # later review found: `_deadline_tag` never builds one (it routes `terminiert` to
+    # `_terminiert_core` first), but `_tag_of` is the entry point makoralle#57 step 3 will call
+    # directly, and a `scheduled` deadline arriving there rendered no tag at all.
+    assert _alternative_core(stunden) == "≤1h nach ÜZ#1"
+    assert _alternative_core(DeadlineAlternative(kind="immediate", backstop=stunden.backstop)) == "u ≤1h nach ÜZ#1"
+    # a coupling renders the step and nothing else: "Parallel zu Nr. 3" is not "by Nr. 3", so a
+    # `≤` here would assert a hard date the source never stated
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="parallel",
+                immediacy=Anchor(kind="step", steps=[2]),
+                backstop=Schedule(anchor=Anchor(kind="unanchored"), latest_time="14:00"),
+            )
+        )
+        == "∥#2"
+    )
+    # and it finds its step wherever `deadline_from_rule` filed it — under `backstop` once an
+    # offset is present, since that disambiguation was verified for `unverzüglich`, not for
+    # `parallel`
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="parallel",
+                immediacy=Anchor(kind="unanchored"),
+                backstop=Schedule(anchor=Anchor(kind="step", steps=[3]), offset=Offset(amount=2)),
+            )
+        )
+        == "∥#3"
+    )
+    # a recurrence prefixes the bound rather than replacing it — an earlier draft returned the
+    # recurrence alone here and discarded the offset with its anchor
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="immediate",
+                backstop=Schedule(
+                    anchor=Anchor(kind="step", steps=[3], event="ÜZ"),
+                    offset=Offset(amount=2),
+                    recurrence="täglich",
+                ),
+            )
+        )
+        == "u täglich ≤2WT nach ÜZ#3"
+    )
+    # a unit outside the Literal renders spelled out rather than taking the serializer down
+    assert (
+        _alternative_core(
+            DeadlineAlternative(
+                kind="immediate",
+                backstop=Schedule(
+                    anchor=Anchor(kind="unanchored"),
+                    offset=Offset.model_construct(amount=3, unit="monate", direction="nach"),
+                ),
+            )
+        )
+        == "u ≤3monate"
+    )
+    # prose branches carry nothing compact; `_deadline_note` is where they surface
+    for kind in ("reference", "complex"):
+        assert _alternative_core(DeadlineAlternative(kind=kind)) == ""
+
+
+def test_no_field_combination_renders_less_than_the_flat_tag_did() -> None:
+    """The shapes a review found silently dropping what the old tag showed.
+
+    None occurs at dataset v0.0.20 — all 28 `parallel` rules on the 906 basis carry only
+    `reference_step`, and 0 of the 414 `unverzüglich` rules set `anchor` — but the upstream is a
+    non-deterministic Vision stage, so "no row does" is not a reason to lose a field.
+    """
+    # a coupling whose step arrives with an anchor name: `deadline_from_rule` files the step as
+    # `established_by`, and for a coupling that step IS what the source named
+    coupled = DeadlineRule(type="parallel", reference_step=3, anchor="Zahlungsziel", raw="Parallel zu Nr. 3.")
+    assert _deadline_tag(coupled) == "{∥#3}"
+    # ... and one carrying an offset keeps its step too, with no invented `≤`
+    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=3, business_days=2, raw="x")) == "{∥#3}"
+    # a recurrence alongside an offset keeps both
+    both = DeadlineRule(
+        type="unverzüglich", business_days=2, reference_step=3, reference_event="ÜZ", recurring=True, raw="x"
+    )
+    assert _deadline_tag(both) == "{u täglich ≤2WT nach ÜZ#3}"
+    # the `or_establishing_step=False` default: for an `unverzüglich` the step filed as
+    # `established_by` says where the anchor's VALUE came from, not what the offset is measured
+    # from, so it stays off the arrow — where a coupling renders exactly the same step
+    withheld = DeadlineRule(
+        type="unverzüglich", reference_step=3, reference_event="ÜT", anchor="Zahlungsziel", raw="Unverzüglich nach X."
+    )
+    assert _deadline_tag(withheld) == "{u}"
+    assert _deadline_note(_step_with_deadline(withheld), ["LF", "NB"]) is not None
+    # ... and the same fields typed as a coupling DO render it (the asymmetry, pinned both ways)
+    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=3, anchor="Zahlungsziel", raw="x")) == "{∥#3}"
+    # a coupling is tied to a step, not to one of its transmission events
+    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=3, reference_event="ÜT", raw="x")) == "{∥#3}"
+    # an anchor of kind "event" is prose too, so a clock beside it does not silence the note
+    evented = DeadlineRule(
+        type="unverzüglich", reference_event="ÜT", latest_time="07:00", raw="Unverzüglich nach dem ÜT, bis 07:00."
+    )
+    assert _deadline_note(_step_with_deadline(evented), ["LF", "NB"]) is not None
+    # a prose anchor reached through the BACKSTOP rather than the immediacy slot: an offset moves
+    # it there, and the note has to look in both places
+    via_backstop = DeadlineRule(
+        type="unverzüglich", anchor="dem Abschluss des Entsperrauftrags", business_days=2, raw="Unverzüglich, 2 WT."
+    )
+    assert _deadline_tag(via_backstop) == "{u ≤2WT}"
+    assert _deadline_note(_step_with_deadline(via_backstop), ["LF", "NB"]) is not None
+    # an `unverzüglich` anchored to prose keeps the anchor out of the tag — but the note fires
+    # even though the clock is a bound, so the anchor survives somewhere
+    prose = DeadlineRule(
+        type="unverzüglich",
+        anchor="dem Abschluss des Entsperrauftrags",
+        latest_time="07:00",
+        raw="Unverzüglich, spätestens 07:00 Uhr nach dem Abschluss des Entsperrauftrags.",
+    )
+    assert _deadline_tag(prose) == "{u ≤07:00}"
+    assert _unverzueglich_sentence_beyond_the_tag(prose) == (
+        "spätestens 07:00 Uhr nach dem Abschluss des Entsperrauftrags"
+    )
+    assert _deadline_note(_step_with_deadline(prose), ["LF", "NB"]) is not None
+
+
+def test_tag_of_never_answers_a_real_deadline_with_silence() -> None:
+    """Every alternative kind that carries structure must render something through `_tag_of`.
+
+    `_tag_of` exists so makoralle#57 step 3 can render an `SDStep.deadline` the parser filled,
+    without a round trip through the flat rule — so a kind it answers with `""` is an arrow that
+    says nothing where the source states a Frist. `scheduled` was exactly that: unreachable from
+    a `DeadlineRule` today, because `_deadline_tag` short-circuits `terminiert` before building a
+    `Deadline` at all, and therefore invisible to every corpus run and to the exhaustive
+    field-combination tests.
+    """
+    bound = Schedule(anchor=Anchor(kind="step", steps=[2], event="ÜT"), offset=Offset(amount=11), latest_time="14:00")
+    carries_structure: list[tuple[AlternativeKind, str]] = [
+        ("scheduled", "{≤14:00 11WT nach ÜT#2}"),
+        ("immediate", "{u ≤14:00 11WT nach ÜT#2}"),
+    ]
+    for kind, expected in carries_structure:
+        assert _tag_of(Deadline(alternatives=[DeadlineAlternative(kind=kind, backstop=bound)], raw="x")) == expected
+    # `reference` and `complex` are the only kinds that may render nothing: they are prose, and
+    # `_deadline_note` is what carries them
+    prose: list[AlternativeKind] = ["reference", "complex"]
+    for prose_kind in prose:
+        assert _tag_of(Deadline(alternatives=[DeadlineAlternative(kind=prose_kind)], raw="x")) == ""
+
+
+def test_terminiert_drops_a_direction_that_points_at_nothing() -> None:
+    """`≤2WT nach` is a preposition with no object, which reads as a truncated tag.
+
+    `_bound_core` already refused it; `_terminiert_core` did not, and the two cores disagreeing
+    about the same question was the one piece of that divergence fixable without deciding how
+    `established_by` should render. 0 of the 23 `terminiert` rows at dataset v0.0.20 set a
+    direction with neither a step nor an anchor, so every shipped tag is unchanged.
+    """
+    assert _deadline_tag(DeadlineRule(type="terminiert", business_days=2, direction="nach", raw="x")) == "{≤2WT}"
+    # ... and it is kept wherever it has something to point at
+    with_step = DeadlineRule(type="terminiert", business_days=11, direction="nach", reference_step=2, raw="x")
+    assert _deadline_tag(with_step) == "{≤11WT nach #2}"
+
+
+def test_tag_of_joins_every_alternative_of_a_conditional_frist() -> None:
+    """A conditional Frist states two obligations, and showing one of them is the same class of
+    bug as showing a bound without its obligation.
+
+    The conditions themselves stay off the arrow — "Bei Aufbau der EDIFACT-Kommunikation" is a
+    label, not a tag — and `raw` carries them into the note. Unreachable from a `DeadlineRule`
+    today: `deadline_from_rule` always yields exactly one alternative.
+    """
+    deadline = Deadline(
+        raw="Bei X gilt: unverzüglich. Bei Y gilt: unverzüglich, jedoch spätester ÜT ist der 2. WT nach Nr. 1.",
+        alternatives=[
+            DeadlineAlternative(kind="immediate", condition="Bei X", immediacy=Anchor(kind="unanchored")),
+            DeadlineAlternative(
+                kind="immediate",
+                condition="Bei Y",
+                backstop=Schedule(anchor=Anchor(kind="step", steps=[1], event="ÜT"), offset=Offset(amount=2)),
+            ),
+        ],
+    )
+    assert _tag_of(deadline) == "{u ; u ≤2WT nach ÜT#1}"
+    # every alternative prose-only: no tag at all rather than an empty "{}"
+    assert _tag_of(Deadline(raw="x", alternatives=[DeadlineAlternative(kind="complex")])) == ""
 
 
 def test_deadline_tag_terminiert_wt_before_external_anchor() -> None:
@@ -494,7 +806,7 @@ def test_emit_appends_deadline_tag_after_pid_suffix() -> None:
         ],
     )
     line = next(ln for ln in emit_wsd(sd).splitlines() if ln.startswith("NB->>LF: 5."))
-    assert line == "NB->>LF: 5. Zuordnung (UTILMD 55001) {≤07:00 1WT ÜZ#5}"
+    assert line == "NB->>LF: 5. Zuordnung (UTILMD 55001) {u ≤07:00 1WT nach ÜZ#5}"
 
 
 def test_emit_bare_unverzueglich_tag() -> None:
