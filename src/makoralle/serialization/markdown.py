@@ -293,15 +293,34 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     if has_tags:
         lines += [
             "- `{u}` — unverzüglich",
+            "- `{u ÜZ#N}` — unverzüglich nach dem ÜZ/ÜT von Schritt N",
+            # Since makoralle#59 the `u` always leads an `unverzüglich` tag and a `≤` marks the
+            # bound, so the old "`{≤HH:MM nWT ÜZ#N}`" entry named a form the diagrams no longer
+            # show — and it defined the bound as if it were the obligation, which is the defect
+            # #59 fixed on the arrows themselves.
+            "- `{u ≤nWT nach ÜZ#N}` — unverzüglich, spätestens n Werktage nach dem ÜZ/ÜT von Schritt N",
+            "- `{u ≤HH:MM nWT nach ÜZ#N}` — dieselbe Frist mit spätester Uhrzeit",
             "- `{∥#N}` — parallel zu Schritt N",
-            "- `{≤HH:MM nWT ÜZ#N}` — spätestens HH:MM, n Werktage nach dem ÜZ/ÜT von Schritt N",
             "- `{≤nWT vor|nach Anker}` — terminierte Frist, n Werktage vor/nach einem Termin "
             "(z. B. Zahlungsziel, Änderungstermin)",
+            # 6 rules at dataset v0.0.20 render one of these and the legend defined neither —
+            # `übermittlung_der_täglichen_ausfallarbeitsüberführungszeitreihe` nr 1 ships
+            # `{täglich ≤14:00}` on its shipped .wsd today.
+            "- `{täglich ≤HH:MM}` / `{werktäglich ≤HH:MM}` — wiederkehrende Frist, täglich bzw. "
+            "werktäglich bis spätestens HH:MM",
         ]
     if has_reference:
         lines.append(
+            # Since makoralle#59 an `(i)` note also carries the *outer bound* of an
+            # `unverzüglich` Frist whose structured fields describe the immediacy anchor
+            # instead — 27 rows at dataset v0.0.20, e.g.
+            # `abrechnung_einer_für_den_esa_erbrachten_leistung` nr 2, whose "jedoch spätester
+            # ÜT ist der 4. WT vor dem Zahlungsziel" exists only in this note. Naming the note
+            # as only "das Ereignis, auf das sich `{u}` bezieht" would send a reader who needs
+            # the bound past the one place it is written.
             "- `(i) …` (Notiz) — Frist im Klartext: Verweis auf eine Tabelle / ein SD / den "
-            "Rahmenvertrag, eine Bedingung, oder das Ereignis, auf das sich `{u}` bezieht"
+            "Rahmenvertrag, eine Bedingung, das Ereignis, auf das sich `{u}` bezieht, oder "
+            "die spätere Frist, die `{u}` begrenzt"
         )
     if has_complex:
         lines.append("- `(!) … [REVIEW]` (Notiz) — komplexe Frist, noch nicht strukturiert geparst")
