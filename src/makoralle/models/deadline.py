@@ -11,7 +11,7 @@ goes — 121 distinct raw texts among the dropped, many opening "Bei … gilt:".
 
 This module adds the shape without changing the old one. ``DeadlineRule`` is untouched, so
 makorele's ``p12_link`` and ``render_sequence_diagrams`` keep working unchanged; the lift in
-:meth:`Deadline.from_rule` reads the flat rule and yields the richer view, which lets a
+:func:`deadline_from_rule` reads the flat rule and yields the richer view, which lets a
 consumer use it against the shipped dataset **today**, before the parser learns to fill it.
 
 makoralle#57 sets out the reverse direction — ``DeadlineRule`` derived from
@@ -24,6 +24,8 @@ new is the half that needs no re-parse.
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
+
+from makoralle.models.process import DeadlineRule
 
 #: The two transmission events a Frist can speak about. ``ÜT`` is the Übertragungstag (the
 #: day), ``ÜZ`` the Übertragungszeitpunkt (the instant).
@@ -39,6 +41,10 @@ class Offset(BaseModel):
     """
 
     amount: int
+    #: Defaulted, where makoralle#57 has it required: every offset the flat rule can express
+    #: is in Werktage (the field is literally ``business_days``), so requiring it would make
+    #: the lift restate the only value it can produce, on all 171 offsets. Kalendertage and
+    #: Stunden exist — 2 Frists each — and must be stated explicitly, never inferred.
     unit: Literal["werktage", "kalendertage", "stunden"] = "werktage"
     #: Defaults to ``nach`` rather than being optional: of the 148 rules at v0.0.20 that
     #: carry an offset and no explicit direction, **0** have prose containing "vor". Making
@@ -64,16 +70,40 @@ class Anchor(BaseModel):
     #: anchor's value comes from, which is why it is not in ``steps``.
     established_by: int | None = None
 
+    @model_validator(mode="after")
+    def _kind_matches_its_fields(self) -> "Anchor":
+        """A public model should not validate a shape it cannot mean: ``kind="step"`` with
+        no steps, or ``kind="event"`` with no event, says nothing while looking specific."""
+        if self.kind == "step" and not self.steps:
+            raise ValueError("an anchor of kind 'step' must name at least one step")
+        if self.kind == "external" and not self.name:
+            raise ValueError("an anchor of kind 'external' must be named")
+        if self.kind == "event" and self.event is None and not self.name:
+            # Either the transmission event, or a description of the process event the
+            # corpus anchors to and the parser cannot reduce ("nach dem Abschluss des
+            # Entsperrauftrags"). One of the two, not necessarily the Literal.
+            raise ValueError("an anchor of kind 'event' must carry an event or a description")
+        return self
+
 
 class Schedule(BaseModel):
     """A hard date: *this* step's event must happen by ``anchor`` plus ``offset``."""
 
+    #: NOTE on makoralle#57's third invariant — "reference_step always points backwards"
+    #: (0 of 203 at v0.0.18, and 0 of 203 re-measured at v0.0.20). It is NOT enforced here,
+    #: deliberately: an ``Anchor`` does not know which step owns it, so the check belongs on
+    #: ``SDStep`` or on the diagram, where both numbers are in scope. Asserting it in this
+    #: model would need the owning step passed in, which every construction site would then
+    #: have to supply. Left for #57 step 3, where the parser has that context.
+
     #: Which of THIS step's own events must meet the deadline ("spätester ÜT ist …").
     #: Distinct from ``anchor.event``, which names an EARLIER step's event that the offset
-    #: is measured from. The flat model has one field for both: at v0.0.20, 183 Frists name
-    #: two events and in 32 they differ, so whichever the single field does not hold is
-    #: dropped. For a consumer evaluating a run these are different checks — "was the ÜZ in
-    #: time" is not "was the ÜT in time".
+    #: is measured from. The flat model has one field for both, so whichever it does not
+    #: hold is dropped: at v0.0.20, 32 Frists name two events that DIFFER. (makoralle#57
+    #: also counts 183 naming two events at all; that total moves with the matching
+    #: pattern, so only the 32 — which reproduces exactly — is quoted here.) For a consumer
+    #: evaluating a run these are different checks: "was the ÜZ in time" is not "was the
+    #: ÜT in time".
     subject: TransmissionEvent | None = None
     anchor: Anchor
     offset: Offset | None = None
@@ -96,7 +126,11 @@ class DeadlineAlternative(BaseModel):
     #: The guard the source states for this branch: "Bei Aufbau der EDIFACT-Kommunikation",
     #: "Bei EEG-Marktlokationen … gilt". ``None`` on an unconditional Frist.
     condition: str | None = None
-    #: "unverzüglich [nach <anchor>]" — act without undue delay, optionally from an anchor.
+    #: What this step is tied to when it is not tied to a date: "unverzüglich [nach
+    #: <anchor>]" for ``immediate``, and the coupled step for ``parallel`` ("zeitgleich mit
+    #: Nr. 3"). Both are obligations relative to another event rather than to a calendar,
+    #: which is why they share the field; ``kind`` is what tells them apart, and a consumer
+    #: evaluating a run must read it — a coupling is not a promptness duty.
     immediacy: Anchor | None = None
     #: "jedoch spätester ÜT ist …" — the hard date the immediacy obligation is bounded by.
     backstop: Schedule | None = None
@@ -115,9 +149,10 @@ class Deadline(BaseModel):
     """A step's Frist. More than one alternative means the source states a conditional."""
 
     alternatives: list[DeadlineAlternative] = Field(min_length=1)
-    #: The source's own wording, unchanged. Kept whatever the structure holds, because it is
-    #: the only thing that can be checked against the document by a human.
-    raw: str = ""
+    #: The source's own wording, unchanged. Required, not defaulted: it is the only thing a
+    #: human can check against the document, and the only full record until the parser fills
+    #: the structure (#57 step 3). A Deadline without it asserts a Frist nobody can verify.
+    raw: str
 
     @property
     def is_conditional(self) -> bool:
@@ -150,18 +185,25 @@ _KIND_BY_TYPE: dict[str, Literal["immediate", "parallel", "scheduled", "referenc
 }
 
 
-def _as_event(value: object) -> TransmissionEvent | None:
+def _as_event(value: str | None) -> TransmissionEvent | None:
     """``ÜT``/``ÜZ`` if that is what the flat field holds, else ``None``.
 
-    ``DeadlineRule.reference_event`` is typed ``str``, and the corpus does hold other
-    wordings; narrowing here rather than at each call site keeps the model's Literal honest
-    instead of trusting the looser upstream type.
+    The corpus holds only ``ÜT``, ``ÜZ`` and ``None`` today, but the field is typed open,
+    so narrow once here rather than trusting the looser upstream type at each call site.
     """
-    return value if value in ("ÜT", "ÜZ") else None
+    if value == "ÜT":
+        return "ÜT"
+    if value == "ÜZ":
+        return "ÜZ"
+    return None
 
 
-def _as_recurrence(value: object) -> Literal["täglich", "werktäglich"] | None:
-    return value if value in ("täglich", "werktäglich") else None
+def _as_recurrence(value: str | None) -> Literal["täglich", "werktäglich"] | None:
+    if value == "täglich":
+        return "täglich"
+    if value == "werktäglich":
+        return "werktäglich"
+    return None
 
 
 def _as_kind(rule_type: str) -> Literal["immediate", "parallel", "scheduled", "reference", "complex"]:
@@ -169,7 +211,7 @@ def _as_kind(rule_type: str) -> Literal["immediate", "parallel", "scheduled", "r
     return _KIND_BY_TYPE.get(rule_type, "complex")
 
 
-def _anchor_from_flat(*, step: int | None, event: object, name: str | None) -> Anchor:
+def _anchor_from_flat(*, step: int | None, event: str | None, name: str | None) -> Anchor:
     """The anchor a flat rule's fields describe.
 
     When the rule carries BOTH a step and an external anchor name, the external one is the
@@ -191,7 +233,7 @@ def _anchor_from_flat(*, step: int | None, event: object, name: str | None) -> A
     return Anchor(kind="unanchored")
 
 
-def deadline_from_rule(rule: object) -> Deadline | None:
+def deadline_from_rule(rule: DeadlineRule) -> Deadline | None:
     """Lift a flat ``DeadlineRule`` into the structured shape, losing nothing it holds.
 
     Returns ``None`` for ``type == "none"``, which is the model's way of saying there is no
@@ -212,44 +254,58 @@ def deadline_from_rule(rule: object) -> Deadline | None:
     Those need the parser (makoralle#57 step 3). A lifted rule is therefore faithful, not
     complete — ``raw`` remains the only full record until then.
     """
-    rule_type = getattr(rule, "type", None)
-    if not rule_type or rule_type == "none":
+    if not rule.type or rule.type == "none":
         return None
 
-    kind = _as_kind(rule_type)
-    raw = getattr(rule, "raw", "") or ""
-    business_days = getattr(rule, "business_days", None)
-    direction = getattr(rule, "direction", None)
-    anchor = _anchor_from_flat(
-        step=getattr(rule, "reference_step", None),
-        event=getattr(rule, "reference_event", None),
-        name=getattr(rule, "anchor", None),
-    )
-    recurrence = _as_recurrence(getattr(rule, "recurrence", None))
-    if recurrence is None:
-        # `recurring: True` with no word for it predates the `recurrence` field; "täglich"
-        # is the only reading that does not invent a weekday restriction the source may not
-        # impose (makorele#101 is the same defect in the other direction).
-        recurrence = "täglich" if getattr(rule, "recurring", False) else None
-    latest_time = getattr(rule, "latest_time", None)
-
+    kind = _as_kind(rule.type)
     offset = (
-        Offset(amount=business_days, unit="werktage", direction=direction or "nach")
-        if business_days is not None
+        Offset(amount=rule.business_days, unit="werktage", direction=rule.direction or "nach")
+        if rule.business_days is not None
         else None
     )
+    recurrence = _as_recurrence(rule.recurrence)
+    if recurrence is None and rule.recurring:
+        # `recurring: True` with no word for it predates the `recurrence` field. Defensive:
+        # every recurring rule at v0.0.20 already carries one, so this only fires on a
+        # dataset written before it. "täglich" is the reading that does not invent a
+        # weekday restriction the source may not impose (makorele#101, in reverse).
+        recurrence = "täglich"
 
-    if rule_type in _IMMEDIATE_TYPES and offset is None:
+    # For `terminiert`, `reference_event` is the SUBJECT — the corpus reads "Spätester <event>
+    # ist …" in all 10 such rules — not the event an offset is measured from. Filing it on the
+    # anchor produces "measured from the ÜT of the Zahlungsziel", which is not a thing, and
+    # leaves `subject` empty in every lifted deadline. For `unverzüglich` it genuinely is the
+    # anchor's event ("… nach dem ÜZ von Nr. 1").
+    subject = _as_event(rule.reference_event) if rule.type == "terminiert" else None
+    anchor = _anchor_from_flat(
+        step=rule.reference_step,
+        event=None if subject is not None else rule.reference_event,
+        name=rule.anchor,
+    )
+
+    if rule.type in _IMMEDIATE_TYPES and offset is None:
         # The fields describe the immediacy anchor; there is no backstop to build. A clock
-        # time or a recurrence still has to survive, so it becomes a backstop with an
-        # unanchored schedule rather than being dropped — which is the bug, in miniature.
+        # time or a recurrence still has to survive, so it becomes an unanchored backstop
+        # rather than being dropped — which is the bug, in miniature.
         backstop = (
-            Schedule(anchor=Anchor(kind="unanchored"), latest_time=latest_time, recurrence=recurrence)
-            if (latest_time or recurrence)
+            Schedule(anchor=Anchor(kind="unanchored"), latest_time=rule.latest_time, recurrence=recurrence)
+            if (rule.latest_time or recurrence)
             else None
         )
-        return Deadline(alternatives=[DeadlineAlternative(kind=kind, immediacy=anchor, backstop=backstop)], raw=raw)
+        return Deadline(
+            alternatives=[DeadlineAlternative(kind=kind, immediacy=anchor, backstop=backstop)], raw=rule.raw
+        )
 
-    backstop = Schedule(anchor=anchor, offset=offset, latest_time=latest_time, recurrence=recurrence)
-    immediacy = Anchor(kind="unanchored") if rule_type in _IMMEDIATE_TYPES else None
-    return Deadline(alternatives=[DeadlineAlternative(kind=kind, immediacy=immediacy, backstop=backstop)], raw=raw)
+    # Only build a backstop when there is something in it. `reference` and `complex` rules
+    # carry no offset, time, step or anchor name — 134 of them at v0.0.20 — and an empty
+    # Schedule would make `states_a_backstop` answer True with nothing behind it. That is the
+    # failure this model exists to remove, reintroduced in the new shape: a consumer would
+    # read 134 steps as "backstop present, go check it".
+    has_content = offset is not None or rule.latest_time or recurrence or anchor.kind != "unanchored"
+    backstop = (
+        Schedule(subject=subject, anchor=anchor, offset=offset, latest_time=rule.latest_time, recurrence=recurrence)
+        if has_content
+        else None
+    )
+    immediacy = Anchor(kind="unanchored") if rule.type in _IMMEDIATE_TYPES else None
+    return Deadline(alternatives=[DeadlineAlternative(kind=kind, immediacy=immediacy, backstop=backstop)], raw=rule.raw)

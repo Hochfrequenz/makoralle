@@ -1,8 +1,9 @@
-# contains 1 lower case word per line which are ignored in the spell_check
-# German MaKo domain terms / identifiers that codespell mistakes for English typos
 aktion
 als
-frist
-oder
+# contains 1 lower case word per line which are ignored in the spell_check
 crossreference
+frist
+# German MaKo domain terms / identifiers that codespell mistakes for English typos
+ist
+oder
 vor

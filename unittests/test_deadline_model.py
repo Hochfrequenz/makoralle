@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from makoralle.models.deadline import (
+    _KIND_BY_TYPE,
     Anchor,
     Deadline,
     DeadlineAlternative,
@@ -90,18 +91,18 @@ def test_a_clock_time_on_an_unanchored_immediacy_rule_is_not_dropped() -> None:
     assert d.alternatives[0].backstop.latest_time == "07:00"
 
 
-def test_recurring_without_a_word_for_it_reads_as_täglich() -> None:
+def test_recurring_without_a_word_for_it_reads_as_taeglich() -> None:
     """`recurring: True` predates the `recurrence` field. "täglich" is the only reading that
     does not invent a weekday restriction the source may not impose — the same defect
     makorele#101 records in the other direction."""
     d = deadline_from_rule(DeadlineRule(type="unverzüglich", recurring=True, raw="Täglich."))
     assert d is not None and d.alternatives[0].backstop is not None
     assert d.alternatives[0].backstop.recurrence == "täglich"
-    werktäglich = deadline_from_rule(
+    werktaeglich = deadline_from_rule(
         DeadlineRule(type="unverzüglich", recurring=True, recurrence="werktäglich", raw="Werktäglich.")
     )
-    assert werktäglich is not None and werktäglich.alternatives[0].backstop is not None
-    assert werktäglich.alternatives[0].backstop.recurrence == "werktäglich"
+    assert werktaeglich is not None and werktaeglich.alternatives[0].backstop is not None
+    assert werktaeglich.alternatives[0].backstop.recurrence == "werktäglich"
 
 
 def test_parallel_keeps_its_own_kind() -> None:
@@ -231,6 +232,22 @@ def test_the_lift_loses_nothing_on_every_shape_the_corpus_actually_has() -> None
             names = [a.name for a in (schedule.anchor if schedule else None, immediacy) if a]
             assert rule.anchor in names, where
 
+        # The other five fields. Without these, eight separate mutations survive — deleting
+        # the event narrowing, the recurrence narrowing, the direction default, the explicit
+        # direction, the kind mapping — because the loop above never looks at them.
+        assert alt.kind == _KIND_BY_TYPE.get(rule.type, "complex"), where
+        if rule.reference_event:
+            events = [a.event for a in (schedule.anchor if schedule else None, immediacy) if a]
+            if schedule is not None:
+                events.append(schedule.subject)
+            assert rule.reference_event in events, where
+        if rule.direction:
+            assert schedule and schedule.offset and schedule.offset.direction == rule.direction, where
+        if rule.recurrence:
+            assert schedule and schedule.recurrence == rule.recurrence, where
+        elif rule.recurring:
+            assert schedule and schedule.recurrence is not None, where
+
 
 def test_a_step_and_an_external_anchor_together_keep_both() -> None:
     """`beginn_messstellenbetrieb` step 16: "der 11. WT nach dem in Nr. 2 vom NB bestätigten
@@ -247,3 +264,83 @@ def test_a_step_and_an_external_anchor_together_keep_both() -> None:
     assert anchor.name == "Zuordnungsbeginn"
     assert anchor.established_by == 2
     assert anchor.steps == []
+
+
+def test_parallel_keeps_its_step_as_a_coupling_not_a_backstop() -> None:
+    """`_IMMEDIATE_TYPES` holds `parallel` as well as `unverzüglich`. Drop it and all 28
+    `parallel` rules — 27 of which carry a `reference_step` and none an offset — silently
+    move their step from the immediacy side to a backstop, asserting a hard date the source
+    never states. `test_parallel_keeps_its_own_kind` checks only `kind`, so it does not see
+    that."""
+    d = deadline_from_rule(DeadlineRule(type="parallel", reference_step=3, raw="Zeitgleich mit Nr. 3."))
+    assert d is not None
+    alt = d.alternatives[0]
+    assert alt.immediacy == Anchor(kind="step", steps=[3])
+    assert alt.backstop is None
+    assert not d.states_a_backstop
+
+
+def test_a_reference_or_complex_rule_carries_no_empty_backstop() -> None:
+    """104 `reference` and 30 `complex` rules hold no offset, time, step or anchor name. An
+    empty `Schedule` would make `states_a_backstop` answer True with nothing behind it —
+    which is the failure this model exists to remove, reintroduced in the new shape. A
+    consumer would read 134 steps as "backstop present, go check it"."""
+    for rule_type in ("reference", "complex"):
+        d = deadline_from_rule(DeadlineRule(type=rule_type, raw="1 WT nach Abbestellung der Aggregationsebene RZ."))
+        assert d is not None, rule_type
+        assert d.alternatives[0].backstop is None, rule_type
+        assert not d.states_a_backstop, rule_type
+
+
+def test_terminiert_files_its_event_as_the_subject_not_the_anchors() -> None:
+    """All 10 `terminiert` rules read "Spätester <event> ist …", so `reference_event` names
+    THIS step's event, not the one an offset is measured from. Filing it on the anchor gives
+    "measured from the ÜT of the Zahlungsziel", which is not a thing — and leaves `subject`
+    empty in every lifted deadline, i.e. the headline field dead on arrival."""
+    d = deadline_from_rule(
+        DeadlineRule(
+            type="terminiert",
+            business_days=20,
+            direction="vor",
+            reference_event="ÜT",
+            anchor="Änderungstermin",
+            raw="Spätester ÜT ist der 20. WT vor dem gewünschten Änderungstermin.",
+        )
+    )
+    assert d is not None and d.alternatives[0].backstop is not None
+    backstop = d.alternatives[0].backstop
+    assert backstop.subject == "ÜT"
+    assert backstop.anchor.event is None
+    assert backstop.anchor.name == "Änderungstermin"
+
+
+def test_states_a_backstop_asks_whether_any_alternative_has_one() -> None:
+    """`any`, not `all`: a conditional Frist where only one branch is bounded still states a
+    backstop, and a consumer must go and check it. Only ever exercised on single-alternative
+    deadlines otherwise, where the two are indistinguishable."""
+    bounded = DeadlineAlternative(
+        kind="immediate", backstop=Schedule(anchor=Anchor(kind="step", steps=[1]), offset=Offset(amount=1))
+    )
+    unbounded = DeadlineAlternative(kind="immediate", immediacy=Anchor(kind="unanchored"))
+    assert Deadline(alternatives=[bounded, unbounded], raw="x").states_a_backstop
+    assert not Deadline(alternatives=[unbounded, unbounded], raw="x").states_a_backstop
+
+
+def test_is_conditional_means_more_than_one_alternative() -> None:
+    single = DeadlineAlternative(kind="immediate", immediacy=Anchor(kind="unanchored"))
+    assert not Deadline(alternatives=[single], raw="x").is_conditional
+    assert Deadline(alternatives=[single, single], raw="x").is_conditional
+
+
+def test_an_offset_is_werktage_unless_the_source_says_otherwise() -> None:
+    """The default carries the corpus: Werktage is what a bare "N. WT" means. Kalendertage
+    and Stunden exist (2 Frists each) and must be stated, never inferred."""
+    assert Offset(amount=3).unit == "werktage"
+    assert Offset(amount=3, unit="stunden").unit == "stunden"
+
+
+def test_a_clock_time_applies_to_the_offset_day_unless_flagged() -> None:
+    """`time_on_anchor_day` defaults False: "15:00 Uhr am ÜT" (15 Frists) puts the time on
+    the anchor's own day, and defaulting True would move every other Frist's clock time to
+    the wrong day."""
+    assert not Schedule(anchor=Anchor(kind="unanchored"), latest_time="15:00").time_on_anchor_day
