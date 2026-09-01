@@ -43,8 +43,9 @@ class Offset(BaseModel):
     amount: int
     #: Defaulted, where makoralle#57 has it required: every offset the flat rule can express
     #: is in Werktage (the field is literally ``business_days``), so requiring it would make
-    #: the lift restate the only value it can produce, on all 171 offsets. Kalendertage and
-    #: Stunden exist — 2 Frists each — and must be stated explicitly, never inferred.
+    #: the lift restate the only value it can produce — on all 160 offsets across the 906
+    #: ``diagrams[]`` rules at v0.0.20. Kalendertage and Stunden exist (2 Frists each) and
+    #: must be stated explicitly, never inferred.
     unit: Literal["werktage", "kalendertage", "stunden"] = "werktage"
     #: Defaults to ``nach`` rather than being optional: of the 148 rules at v0.0.20 that
     #: carry an offset and no explicit direction, **0** have prose containing "vor". Making
@@ -78,6 +79,12 @@ class Anchor(BaseModel):
             raise ValueError("an anchor of kind 'step' must name at least one step")
         if self.kind == "external" and not self.name:
             raise ValueError("an anchor of kind 'external' must be named")
+        if self.kind == "unanchored" and (self.steps or self.name):
+            raise ValueError("an 'unanchored' anchor must carry neither steps nor a name")
+        if self.kind == "step" and self.name:
+            # The shape the lift deliberately avoids: where a step and an external anchor
+            # coexist, the anchor is external and the step is `established_by`.
+            raise ValueError("a 'step' anchor must not also be named; use 'external' with established_by")
         if self.kind == "event" and self.event is None and not self.name:
             # Either the transmission event, or a description of the process event the
             # corpus anchors to and the parser cannot reduce ("nach dem Abschluss des
@@ -229,6 +236,12 @@ def _anchor_from_flat(*, step: int | None, event: str | None, name: str | None) 
     if name:
         return Anchor(kind="external", name=name, event=_as_event(event))
     if _as_event(event) is not None:
+        # Unreachable from a flat rule today — over all 1601 `deadline_rule` entries at
+        # v0.0.20 the lift builds no `event` anchor, because a bare `reference_event` with
+        # no step and no anchor name is either drained into `subject` (terminiert) or left
+        # on an otherwise empty anchor. Kept for the parser output of #57 step 3, which can
+        # anchor to an event the corpus names in prose ("nach dem Abschluss des
+        # Entsperrauftrags").
         return Anchor(kind="event", event=_as_event(event))
     return Anchor(kind="unanchored")
 
@@ -301,11 +314,25 @@ def deadline_from_rule(rule: DeadlineRule) -> Deadline | None:
     # Schedule would make `states_a_backstop` answer True with nothing behind it. That is the
     # failure this model exists to remove, reintroduced in the new shape: a consumer would
     # read 134 steps as "backstop present, go check it".
-    has_content = offset is not None or rule.latest_time or recurrence or anchor.kind != "unanchored"
+    # `subject` counts as content. Without it a `terminiert` rule carrying only
+    # `reference_event` builds no backstop — because the subject has just drained that field
+    # out of the anchor — and the `scheduled` validator then REJECTS it, so the lift raises
+    # on input it used to handle. v0.0.20 happens to contain no such rule, so the corpus run
+    # stays clean and says nothing about it; the upstream is a non-deterministic Vision
+    # stage, so "not in today's corpus" is not a guarantee.
+    has_content = (
+        offset is not None or rule.latest_time or recurrence or subject is not None or anchor.kind != "unanchored"
+    )
     backstop = (
         Schedule(subject=subject, anchor=anchor, offset=offset, latest_time=rule.latest_time, recurrence=recurrence)
         if has_content
         else None
     )
+    if backstop is None and kind == "scheduled":
+        # A `terminiert` rule with nothing structured in it is real but not reduced — which
+        # is what `complex` means. Degrading beats raising: this function's contract is
+        # "None only for type: none", and a library that throws on a shape its own upstream
+        # can emit is worse than one that says "I could not structure this".
+        kind = "complex"
     immediacy = Anchor(kind="unanchored") if rule.type in _IMMEDIATE_TYPES else None
     return Deadline(alternatives=[DeadlineAlternative(kind=kind, immediacy=immediacy, backstop=backstop)], raw=rule.raw)

@@ -344,3 +344,85 @@ def test_a_clock_time_applies_to_the_offset_day_unless_flagged() -> None:
     the anchor's own day, and defaulting True would move every other Frist's clock time to
     the wrong day."""
     assert not Schedule(anchor=Anchor(kind="unanchored"), latest_time="15:00").time_on_anchor_day
+
+
+def test_a_terminiert_rule_carrying_only_its_event_still_lifts() -> None:
+    """The regression round 1's own two fixes combined to create.
+
+    `subject` drains `reference_event` out of the anchor, so the anchor is unanchored; if
+    `has_content` does not count `subject` the backstop is None, and the `scheduled`
+    validator then REJECTS it — the lift raising on input it used to handle. v0.0.20
+    contains no such rule, so the corpus run stays clean and says nothing about it.
+    """
+    d = deadline_from_rule(DeadlineRule(type="terminiert", reference_event="ÜT", raw="Spätester ÜT ist …"))
+    assert d is not None
+    assert d.alternatives[0].kind == "scheduled"
+    assert d.alternatives[0].backstop is not None
+    assert d.alternatives[0].backstop.subject == "ÜT"
+
+
+def test_a_terminiert_rule_with_nothing_in_it_degrades_rather_than_raising() -> None:
+    """`complex` means "real, but not reduced", which is exactly what this is. The function's
+    contract is "None only for type: none"; a library that throws on a shape its own
+    non-deterministic upstream can emit is worse than one that says it could not structure
+    the Frist."""
+    d = deadline_from_rule(DeadlineRule(type="terminiert", raw="Zum Bilanzierungsmonat."))
+    assert d is not None
+    assert d.alternatives[0].kind == "complex"
+    assert d.alternatives[0].backstop is None
+    assert d.raw == "Zum Bilanzierungsmonat."
+
+
+def test_every_lift_of_every_shape_returns_rather_than_raises() -> None:
+    """The contract, over the whole fixture plus the degenerate shapes the corpus lacks."""
+    shapes = json.loads((Path(__file__).parent / "fixtures" / "deadline_rule_shapes.json").read_text("utf-8"))
+    extra = [
+        {"type": t, "raw": "x", **f}
+        for t in ("terminiert", "reference", "complex", "unverzüglich", "parallel")
+        for f in ({}, {"reference_event": "ÜT"}, {"reference_event": "ÜZ"}, {"recurring": True})
+    ]
+    for entry in [*({k: v for k, v in e.items() if k != "_where"} for e in shapes), *extra]:
+        deadline_from_rule(DeadlineRule(**entry))  # must not raise
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"kind": "step", "steps": []},
+        {"kind": "external", "name": None},
+        {"kind": "event", "event": None, "name": None},
+        {"kind": "unanchored", "steps": [3]},
+        {"kind": "unanchored", "name": "Zahlungsziel"},
+        {"kind": "step", "steps": [3], "name": "Zahlungsziel"},
+    ],
+)
+def test_an_anchor_whose_kind_and_fields_disagree_is_refused(kwargs: dict[str, object]) -> None:
+    """A public model should not validate a shape it cannot mean. Deleting any single branch
+    of the validator, or the whole thing, otherwise survives the entire suite. The last case
+    is the shape the lift deliberately avoids: a step and a name together mean the anchor is
+    external and the step merely establishes its value."""
+    with pytest.raises(ValidationError):
+        Anchor(**kwargs)  # type: ignore[arg-type]
+
+
+def test_raw_is_required_not_defaulted() -> None:
+    """It is the only full record until the parser fills the structure, and the only thing a
+    human can check against the document. Defaulting it to "" lets a Deadline assert a Frist
+    nobody can verify — and nothing else in the suite notices."""
+    with pytest.raises(ValidationError):
+        Deadline(alternatives=[DeadlineAlternative(kind="complex")])  # type: ignore[call-arg]
+
+
+def test_a_clock_time_alone_is_content_enough_for_a_backstop() -> None:
+    """`has_content`'s `latest_time` term: without it, "Spätester ÜT ist 15:00 Uhr" loses its
+    only structured fact."""
+    d = deadline_from_rule(DeadlineRule(type="reference", latest_time="15:00", raw="… 15:00 Uhr"))
+    assert d is not None and d.alternatives[0].backstop is not None
+    assert d.alternatives[0].backstop.latest_time == "15:00"
+
+
+def test_a_recurrence_alone_is_content_enough_for_a_backstop() -> None:
+    """`has_content`'s `recurrence` term, for the same reason."""
+    d = deadline_from_rule(DeadlineRule(type="reference", recurrence="werktäglich", raw="Werktäglich."))
+    assert d is not None and d.alternatives[0].backstop is not None
+    assert d.alternatives[0].backstop.recurrence == "werktäglich"
