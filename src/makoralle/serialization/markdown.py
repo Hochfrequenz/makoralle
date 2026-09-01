@@ -10,7 +10,7 @@ import yaml
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
 from makoralle.models.process import REF_PREFIX, DeadlineRule, is_known_actor, is_ref_step
-from makoralle.serialization.wsd import _unverzueglich_sentence_beyond_the_tag, span_of_lanes
+from makoralle.serialization.wsd import _deadline_tag, _unverzueglich_sentence_beyond_the_tag, span_of_lanes
 
 logger = logging.getLogger(__name__)
 
@@ -265,15 +265,19 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     steps = sd.get("steps", [])
     participants = sd.get("participants", [])
     types = {(s.get("deadline_rule") or {}).get("type") for s in steps}
-    # Per marker family, not one flag for all three. With a single `has_tags` a diagram whose
-    # only Frist is `terminiert` listed every `{u …}` form as well — one stale line before
-    # makoralle#59 split the `unverzüglich` entry into four, four after, which is why the split
-    # forced this. A legend that defines markers the diagram does not show teaches the reader to
-    # distrust it.
-    has_unverzueglich = "unverzüglich" in types
-    has_parallel = "parallel" in types
-    has_terminiert = "terminiert" in types
-    has_tags = has_unverzueglich or has_parallel or has_terminiert
+    # Gated on the tags this diagram actually RENDERS, not on the rule types it holds. Keying on
+    # the type listed every form of a family as soon as one member appeared: at v0.0.20 that put
+    # 396 stale lines on 142 of the 195 primary SDs, and gave
+    # `abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb`, whose only Frist renders
+    # `{u}`, every `{u …}` line there is. Deriving the legend from `_deadline_tag` cannot drift
+    # from the arrows, because it is the function that drew them.
+    tags = {_deadline_tag(DeadlineRule.model_validate(s["deadline_rule"])) for s in steps if s.get("deadline_rule")}
+    tags.discard("")
+    has_tags = bool(tags)
+
+    def shows(pattern: str) -> bool:
+        return any(re.fullmatch(pattern, tag) for tag in tags)
+
     # Since makorele#101 a bare-tagged `unverzüglich` whose sentence says more also renders as an
     # unflagged `(i)` note, so keying this entry on the `reference` type alone would leave 107 of
     # the 228 shipped diagrams showing an `(i)` marker the legend does not define — the same
@@ -298,35 +302,54 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     if not (has_tags or has_reference or has_complex or has_unread_endpoint):
         return []
     lines = ["**Fristen (Legende der Diagramm-Markierungen):**", ""]
-    if has_unverzueglich:
-        lines += [
-            "- `{u}` — unverzüglich",
-            # `{u #N}` is live: `verpflichtung_gmsb` nr 4 ("Unmittelbar nach Nr. 3.") has a step
-            # and no event, so an entry naming only the ÜZ/ÜT form would leave it undefined.
-            "- `{u #N}` / `{u ÜZ#N}` — unverzüglich nach (dem ÜZ/ÜT von) Schritt N",
-            # Since makoralle#59 the `u` always leads an `unverzüglich` tag and a `≤` marks the
-            # bound, so the old "`{≤HH:MM nWT ÜZ#N}`" entry named a form the diagrams no longer
-            # show — and it defined the bound as if it were the obligation, which is the defect
-            # #59 fixed on the arrows themselves.
-            "- `{u ≤nWT nach ÜZ#N}` — unverzüglich, spätestens n Werktage nach dem ÜZ/ÜT von Schritt N",
-            "- `{u ≤HH:MM nWT nach ÜZ#N}` — dieselbe Frist mit spätester Uhrzeit",
-        ]
-    if has_parallel:
-        # `{∥}` ships where the source names no single step — `beendigung_einer_konfiguration_vom_msb`
-        # nr 3, "Parallel zu Nr. 1 oder 2.", whose disjunction the flat rule cannot hold.
-        lines.append("- `{∥#N}` / `{∥}` — parallel zu Schritt N (bzw. zu einem der genannten Schritte)")
-    if has_terminiert:
-        lines += [
+    if "{u}" in tags:
+        lines.append("- `{u}` — unverzüglich")
+    # `{u #N}` is live: `verpflichtung_gmsb` nr 4 ("Unmittelbar nach Nr. 3.") has a step and no
+    # event, so an entry naming only the ÜZ/ÜT form would leave that arrow undefined.
+    if shows(r"\{u (ÜZ|ÜT)?#[\d/]+\}"):
+        lines.append("- `{u #N}` / `{u ÜZ#N}` — unverzüglich nach (dem ÜZ/ÜT von) Schritt N")
+    # Since makoralle#59 the `u` always leads an `unverzüglich` tag and a `≤` marks the bound, so
+    # the old "`{≤HH:MM nWT ÜZ#N}`" entry named a form the diagrams no longer show — and it
+    # defined the bound as if it were the obligation, the defect #59 fixed on the arrows.
+    # The clock may precede the offset (`{u ≤07:00 1WT nach ÜT#1}`), so this entry has to match
+    # past it — otherwise a clocked row got only the clock line, whose text then referred to an
+    # entry that was not there.
+    if shows(r"\{u ≤(\d\d:\d\d )?\d+(WT|KT|h)( (vor|nach) [^}]*)?\}"):
+        lines.append(
+            "- `{u ≤nWT vor|nach ÜZ#N}` — unverzüglich, spätestens n Werktage vor/nach dem ÜZ/ÜT von Schritt N"
+        )
+    if shows(r"\{u [^}]*≤\d\d:\d\d[^}]*\}"):
+        lines.append("- `{u ≤HH:MM …}` — unverzüglich, spätestens zur genannten Uhrzeit des errechneten Tages")
+    # The recurrence trails the anchor when the rule has one (`{u #2 täglich}`), so this cannot
+    # anchor on the marker.
+    if shows(r"\{u [^}]*(täglich|werktäglich)[^}]*\}"):
+        lines.append("- `{u täglich …}` / `{u werktäglich …}` — unverzüglich, und die Pflicht wiederholt sich")
+    # `{∥}` ships where the source names no single step — `beendigung_einer_konfiguration_vom_msb`
+    # nr 3, "Parallel zu Nr. 1 oder 2.", whose disjunction the flat rule cannot hold.
+    if "{∥}" in tags:
+        lines.append("- `{∥}` — parallel zu einem der genannten Schritte")
+    if shows(r"\{∥#[\d/]+\}"):
+        lines.append("- `{∥#N}` — parallel zu Schritt N")
+    if shows(r"\{≤\d+(WT|KT|h)( (vor|nach))?( [^}]*)?\}"):
+        lines.append(
             "- `{≤nWT vor|nach Anker}` — terminierte Frist, n Werktage vor/nach einem Termin "
-            "(z. B. Zahlungsziel, Änderungstermin); der Anker kann auch ein Schritt sein (`≤nWT nach #N`)",
-            # On the 906 `diagrams[]` basis at v0.0.20, 5 rows ship the bare-anchor form (all
-            # `{≤Zahlungsziel}`) and 6 a recurring one, and the legend defined neither —
-            # `übermittlung_der_täglichen_ausfallarbeitsüberführungszeitreihe` nr 1 ships
-            # `{täglich ≤14:00}` on its shipped .wsd today.
-            "- `{≤Anker}` — spätestens zu einem Termin ohne Fristangabe (z. B. `{≤Zahlungsziel}`)",
+            "(z. B. Zahlungsziel, Änderungstermin); der Anker kann auch ein Schritt sein (`≤nWT nach #N`)"
+        )
+    # On the 906 `diagrams[]` basis at v0.0.20, 5 rows ship the bare-anchor form (all
+    # `{≤Zahlungsziel}`) and 6 a recurring one, and the legend defined neither —
+    # `übermittlung_der_täglichen_ausfallarbeitsüberführungszeitreihe` nr 1 ships `{täglich ≤14:00}`
+    # on its shipped .wsd today.
+    if shows(r"\{≤(?!\d+(WT|KT|h)\b)(?!\d\d:\d\d)[^}]*\}"):
+        lines.append("- `{≤Anker}` — spätestens zu einem Termin ohne Fristangabe (z. B. `{≤Zahlungsziel}`)")
+    if shows(r"\{≤\d\d:\d\d[^}]*\}"):
+        lines.append("- `{≤HH:MM Anker}` — spätestens zu einer Uhrzeit")
+    if shows(r"\{(täglich|werktäglich)[^}]*\}"):
+        lines.append(
             "- `{täglich ≤HH:MM}` / `{werktäglich ≤HH:MM}` — wiederkehrende Frist, täglich bzw. "
-            "werktäglich bis spätestens HH:MM",
-        ]
+            "werktäglich bis spätestens HH:MM"
+        )
+    if shows(r"\{[^}]* ; [^}]*\}"):
+        lines.append("- `{… ; …}` — bedingte Frist: mehrere Alternativen, deren Bedingungen in der Notiz stehen")
     if has_reference:
         lines.append(
             # Since makoralle#59 an `(i)` note also carries the *outer bound* of an

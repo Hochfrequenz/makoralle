@@ -112,7 +112,10 @@ def test_deadline_legend_emitted_for_complex_only() -> None:
 def test_deadline_legend_explains_vocabulary() -> None:
     sd = {"steps": [{"nr": 1, "deadline_rule": {"type": "unverzüglich", "business_days": 1}}]}
     text = "\n".join(_deadline_legend(sd))
-    assert "{u}" in text
+    # This diagram renders `{u ≤1WT}` and nothing else, so since makoralle#59 it gets the bound
+    # entry and NOT the bare `{u}` one — the legend is derived from the tags actually drawn.
+    assert "`{u ≤nWT vor|nach ÜZ#N}`" in text
+    assert "{u}" not in text
     assert "WT" in text  # business days
     assert "ÜZ" in text or "ÜT" in text
 
@@ -138,19 +141,83 @@ def test_deadline_legend_lists_only_the_marker_families_the_diagram_shows() -> N
     # `{u #N}` is live — `verpflichtung_gmsb` nr 4 ("Unmittelbar nach Nr. 3.") has a step and no
     # event, so an entry naming only the ÜZ/ÜT form would leave that arrow undefined
     assert "`{u #N}`" in unverzueglich
+    # ... and this diagram draws no bound and no clock, so neither of those entries appears
+    assert "spätester Uhrzeit" not in unverzueglich
+    assert "spätestens n Werktage" not in unverzueglich
 
     parallel = "\n".join(_deadline_legend({"steps": [{"nr": 1, "deadline_rule": {"type": "parallel"}}]}))
     assert "{u" not in parallel
     # `{∥}` ships where the source names no single step (`beendigung_einer_konfiguration_vom_msb`
     # nr 3, "Parallel zu Nr. 1 oder 2.")
     assert "`{∥}`" in parallel
+    assert "`{∥#N}`" not in parallel  # this diagram names no step, so that entry would be stale
+
+
+def test_deadline_legend_defines_every_form_the_clocked_and_recurring_tags_show() -> None:
+    """The three entries makoralle#59 added or reworked, each pinned against deletion: a diagram
+    that draws a clocked bound, a recurring `unverzüglich`, or a conditional Frist must define it.
+    """
+    clocked = "\n".join(
+        _deadline_legend(
+            {
+                "steps": [
+                    {
+                        "nr": 1,
+                        "deadline_rule": {
+                            "type": "unverzüglich",
+                            "latest_time": "07:00",
+                            "business_days": 1,
+                            "reference_step": 1,
+                            "reference_event": "ÜT",
+                        },
+                    }
+                ]
+            }
+        )
+    )
+    assert "`{u ≤HH:MM …}`" in clocked
+    assert "`{u ≤nWT vor|nach ÜZ#N}`" in clocked
+
+    # `{u täglich …}` is renderable and was undefined: the recurring entries used to be gated on
+    # the `terminiert` family, so a recurring `unverzüglich` showed a marker nothing explained.
+    recurring = "\n".join(
+        _deadline_legend(
+            {"steps": [{"nr": 1, "deadline_rule": {"type": "unverzüglich", "recurring": True, "reference_step": 2}}]}
+        )
+    )
+    assert "`{u täglich …}`" in recurring
+
+    # `{täglich ≤HH:MM}` is the `terminiert` form — `übermittlung_der_täglichen_…` nr 1 ships it
+    terminiert_recurring = "\n".join(
+        _deadline_legend(
+            {"steps": [{"nr": 1, "deadline_rule": {"type": "terminiert", "recurring": True, "latest_time": "14:00"}}]}
+        )
+    )
+    assert "`{täglich ≤HH:MM}`" in terminiert_recurring
 
 
 def test_deadline_legend_emitted_for_terminiert() -> None:
     sd = {"steps": [{"nr": 1, "deadline_rule": {"type": "terminiert", "anchor": "Zahlungsziel"}}]}
     text = "\n".join(_deadline_legend(sd))
     assert text  # legend shown
-    assert "vor" in text and "nach" in text  # explains the terminiert direction vocabulary
+    # `{≤Zahlungsziel}` is all this diagram draws, so the vor/nach entry would define a form it
+    # never shows; a diagram that does draw an offset gets that entry instead.
+    assert "`{≤Anker}`" in text
+    offset = {
+        "steps": [
+            {
+                "nr": 1,
+                "deadline_rule": {
+                    "type": "terminiert",
+                    "business_days": 20,
+                    "direction": "vor",
+                    "anchor": "Änderungstermin",
+                },
+            }
+        ]
+    }
+    offset_text = "\n".join(_deadline_legend(offset))
+    assert "vor" in offset_text and "nach" in offset_text  # explains the terminiert direction vocabulary
 
 
 def test_deadline_legend_emitted_for_reference_note() -> None:

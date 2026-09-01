@@ -42,7 +42,7 @@ def _unit(unit: str) -> str:
     return _UNIT_ABBREVIATION.get(unit, unit)
 
 
-def _step_anchor_tag(anchor: Anchor | None, *, or_establishing_step: bool = False) -> str:
+def _step_anchor_tag(anchor: Anchor | None, *, or_establishing_step: bool = False, with_event: bool = True) -> str:
     """The compact ``[event]#nr`` form of an anchor, or "" for one the arrow cannot carry.
 
     Only a ``step`` anchor goes on the label. An ``external`` one is prose — 63 characters
@@ -53,13 +53,16 @@ def _step_anchor_tag(anchor: Anchor | None, *, or_establishing_step: bool = Fals
     bound. 0 of the 414 ``unverzüglich`` rules at v0.0.20 set ``DeadlineRule.anchor`` at all,
     so no shipped row reaches either path.
 
-    ``or_establishing_step`` is for a ``parallel`` alternative only. Where the flat rule names
-    a step *and* an anchor, ``deadline_from_rule`` files the step as ``established_by`` — for
-    an ``unverzüglich`` bound that step says where the anchor's *value* came from and is not
-    what the offset is measured from (`beginn_messstellenbetrieb` nr 16, "der 11. WT nach dem
-    **in Nr. 2** vom NB bestätigten Zuordnungsbeginn"), so rendering it as the anchor would
-    assert something the source does not. For a coupling there is no such distinction: "Parallel
-    zu Nr. 3" names the step and nothing else, so it is rendered.
+    ``or_establishing_step`` and ``with_event`` are for a ``parallel`` alternative only. Where
+    the flat rule names a step *and* an anchor, ``deadline_from_rule`` files the step as
+    ``established_by``: for a bound that step says where the anchor's *value* came from and is
+    not what the offset is measured from, so rendering it as the anchor would assert something
+    the source does not. (`beginn_messstellenbetrieb` nr 16 is the wording that rule was drawn
+    from — "der 11. WT nach dem **in Nr. 2** vom NB bestätigten Zuordnungsbeginn" — though that
+    row is ``terminiert`` and so never reaches this function.) A coupling has no such
+    distinction: "Parallel zu Nr. 3" names a step and nothing else, which is also why
+    ``with_event=False`` there — a coupling is tied to the step, not to one of its transmission
+    events, and `{∥ÜT#3}` would assert a precision the source does not state.
 
     ``steps`` joins on "/" because the source says "Nr. 3 bzw. 4". The flat rule cannot
     express that (all 442 ``unverzüglich`` and ``parallel`` rules at v0.0.20 hold at most one
@@ -68,11 +71,49 @@ def _step_anchor_tag(anchor: Anchor | None, *, or_establishing_step: bool = Fals
     """
     if anchor is None:
         return ""
+    event = anchor.event or "" if with_event else ""
     if anchor.kind == "external" and or_establishing_step and anchor.established_by is not None:
-        return f"{anchor.event or ''}#{anchor.established_by}"
+        return f"{event}#{anchor.established_by}"
     if anchor.kind != "step" or not anchor.steps:
         return ""
-    return f"{anchor.event or ''}#{'/'.join(str(s) for s in anchor.steps)}"
+    return f"{event}#{'/'.join(str(s) for s in anchor.steps)}"
+
+
+def _bound_core(sched: Schedule) -> str:
+    """The ``≤``-led hard date a schedule states, or "" when it states none.
+
+    Separate from :func:`_backstop_core` because a recurrence is not a hard date: "werktäglich"
+    says how often the duty recurs, not by when it must be over. ``Schedule`` answers
+    ``states_a_backstop`` True for a recurrence-only bound, which is the right answer to a
+    different question — so the note predicate asks this one instead. Getting that wrong lost
+    "nach Nr. 2" from both the arrow and the note on a recurrence-only ``unverzüglich``.
+    """
+    pieces: list[str] = []
+    if sched.latest_time:
+        pieces.append(sched.latest_time)
+    anchor = _step_anchor_tag(sched.anchor)
+    if sched.offset:
+        # The direction is spelled out even though ``Offset`` defaults it to "nach" and 0 of
+        # the 148 offsets at v0.0.20 say "vor": `{≤11WT nach #2}` is what a `terminiert` tag
+        # already reads, and one vocabulary the legend can define beats three characters.
+        # With no anchor it is dropped instead — "≤3WT nach" points at nothing, and a
+        # preposition with no object reads as a truncation.
+        offset = f"{sched.offset.amount}{_unit(sched.offset.unit)}"
+        pieces.append(f"{offset} {sched.offset.direction}" if anchor else offset)
+    if anchor:
+        pieces.append(anchor)
+    return "≤" + " ".join(pieces) if pieces else ""
+
+
+def _states_a_hard_date(deadline: Deadline) -> bool:
+    """Whether any alternative's bound actually reaches the arrow as a ``≤`` date.
+
+    ``Deadline.states_a_backstop`` is the model's question — "is there a Schedule here" — and
+    it answers True for a schedule holding nothing but a recurrence. The note has to ask the
+    renderer's question instead: if no ``≤`` reaches the label, the sentence is still the only
+    place the bound is written.
+    """
+    return any(alt.backstop is not None and _bound_core(alt.backstop) for alt in deadline.alternatives)
 
 
 def _backstop_core(sched: Schedule) -> str:
@@ -89,21 +130,7 @@ def _backstop_core(sched: Schedule) -> str:
     here would rewrite all 23 of its shipped tags to settle a disagreement no corpus row
     exhibits; #59 is about the ``unverzüglich`` rows, so the older function keeps its 23.
     """
-    pieces: list[str] = []
-    if sched.latest_time:
-        pieces.append(sched.latest_time)
-    anchor = _step_anchor_tag(sched.anchor)
-    if sched.offset:
-        # The direction is spelled out even though ``Offset`` defaults it to "nach" and 0 of
-        # the 148 offsets at v0.0.20 say "vor": `{≤11WT nach #2}` is what a `terminiert` tag
-        # already reads, and one vocabulary the legend can define beats three characters.
-        # With no anchor it is dropped instead — "≤3WT nach" points at nothing, and a
-        # preposition with no object reads as a truncation.
-        offset = f"{sched.offset.amount}{_unit(sched.offset.unit)}"
-        pieces.append(f"{offset} {sched.offset.direction}" if anchor else offset)
-    if anchor:
-        pieces.append(anchor)
-    bound = "≤" + " ".join(pieces) if pieces else ""
+    bound = _bound_core(sched)
     if not sched.recurrence:
         return bound
     # The recurrence says how OFTEN the obligation recurs and the rest says by when, so it
@@ -136,8 +163,8 @@ def _alternative_core(alt: DeadlineAlternative) -> str:
         # `or_establishing_step` recovers the step from an external anchor, where for a
         # coupling the step *is* what the source named. No space after the marker: "{∥#2}" is
         # the shipped form, and it reads as one token with the step it couples to.
-        coupled = _step_anchor_tag(alt.immediacy, or_establishing_step=True) or _step_anchor_tag(
-            alt.backstop.anchor if alt.backstop else None, or_establishing_step=True
+        coupled = _step_anchor_tag(alt.immediacy, or_establishing_step=True, with_event=False) or _step_anchor_tag(
+            alt.backstop.anchor if alt.backstop else None, or_establishing_step=True, with_event=False
         )
         return f"∥{coupled}"
     if alt.kind != "immediate":
@@ -156,6 +183,13 @@ def _deadline_tag(rule: DeadlineRule | None) -> str:
     anchor and no bound), ``{u ÜZ#1}`` (unverzüglich after the ÜZ of step 1),
     ``{u ≤2WT nach ÜT#1}`` (unverzüglich, and at the latest 2 WT after the ÜT of step 1),
     ``{∥#2}`` (parallel to step 2), ``{≤20WT vor Änderungstermin}`` (terminiert).
+
+    One shape still shows less on the arrow than the old tag did: an ``unverzüglich`` naming both
+    a step and a prose anchor renders ``{u}`` where the flat tag rendered ``{ÜT#3}``, because
+    ``deadline_from_rule`` files the step as ``established_by`` and that is not what the offset is
+    measured from (see :func:`_step_anchor_tag`). Nothing is lost from the diagram —
+    :func:`_holds_a_prose_anchor` makes the note fire — and 0 of the 414 ``unverzüglich`` rules at
+    v0.0.20 set ``anchor``, so no shipped row takes that path.
 
     Goes through :func:`deadline_from_rule` rather than reading the flat fields directly,
     because *which obligation owns them* is not local knowledge: for an ``unverzüglich`` rule
@@ -186,7 +220,7 @@ def _tag_of(deadline: Deadline) -> str:
     parser filled directly, without a round trip back through the flat rule.
     """
     cores = [core for core in (_alternative_core(alt) for alt in deadline.alternatives) if core]
-    return "{" + " | ".join(cores) + "}" if cores else ""
+    return "{" + " ; ".join(cores) + "}" if cores else ""
 
 
 def _terminiert_core(rule: DeadlineRule) -> str:
@@ -271,7 +305,7 @@ def _unverzueglich_sentence_beyond_the_tag(rule: DeadlineRule) -> str:
     deadline = deadline_from_rule(rule)
     if deadline is None:
         return ""
-    if deadline.states_a_backstop and not _holds_a_prose_anchor(deadline):
+    if _states_a_hard_date(deadline) and not _holds_a_prose_anchor(deadline):
         return ""
     return _UNVERZUEGLICH_MARKER.sub("", rule.raw or "").strip(" .;,!?")
 
@@ -292,7 +326,10 @@ def _holds_a_prose_anchor(deadline: Deadline) -> bool:
     """
     for alt in deadline.alternatives:
         for anchor in (alt.immediacy, alt.backstop.anchor if alt.backstop else None):
-            if anchor is not None and anchor.kind in ("external", "event") and not _step_anchor_tag(anchor):
+            # No "and not _step_anchor_tag(anchor)" guard: that read like a check and was a
+            # tautology, since every kind but ``step`` renders "" without
+            # ``or_establishing_step``, which only the coupling branch passes.
+            if anchor is not None and anchor.kind in ("external", "event"):
                 return True
     return False
 
