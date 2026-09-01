@@ -1,4 +1,5 @@
 import logging
+from typing import Literal
 
 import pytest
 
@@ -13,6 +14,8 @@ from makoralle.serialization.wsd import (
     emit_wsd,
 )
 from makoralle.webapp_export import extract_review_notes
+
+AlternativeKind = Literal["immediate", "parallel", "scheduled", "reference", "complex"]
 
 
 def _step_with_deadline(rule: DeadlineRule) -> SDStep:
@@ -575,7 +578,11 @@ def test_alternative_core_renders_the_shape_the_parser_will_fill() -> None:
         kind="scheduled",
         backstop=Schedule(anchor=Anchor(kind="step", steps=[1], event="ÜZ"), offset=Offset(amount=1, unit="stunden")),
     )
-    assert _alternative_core(stunden) == ""  # scheduled routes to _terminiert_core off the rule
+    # A `scheduled` alternative renders its bound. This used to assert `""` — pinning the gap a
+    # later review found: `_deadline_tag` never builds one (it routes `terminiert` to
+    # `_terminiert_core` first), but `_tag_of` is the entry point makoralle#57 step 3 will call
+    # directly, and a `scheduled` deadline arriving there rendered no tag at all.
+    assert _alternative_core(stunden) == "≤1h nach ÜZ#1"
     assert _alternative_core(DeadlineAlternative(kind="immediate", backstop=stunden.backstop)) == "u ≤1h nach ÜZ#1"
     # a coupling renders the step and nothing else: "Parallel zu Nr. 3" is not "by Nr. 3", so a
     # `≤` here would assert a hard date the source never stated
@@ -690,6 +697,44 @@ def test_no_field_combination_renders_less_than_the_flat_tag_did() -> None:
         "spätestens 07:00 Uhr nach dem Abschluss des Entsperrauftrags"
     )
     assert _deadline_note(_step_with_deadline(prose), ["LF", "NB"]) is not None
+
+
+def test_tag_of_never_answers_a_real_deadline_with_silence() -> None:
+    """Every alternative kind that carries structure must render something through `_tag_of`.
+
+    `_tag_of` exists so makoralle#57 step 3 can render an `SDStep.deadline` the parser filled,
+    without a round trip through the flat rule — so a kind it answers with `""` is an arrow that
+    says nothing where the source states a Frist. `scheduled` was exactly that: unreachable from
+    a `DeadlineRule` today, because `_deadline_tag` short-circuits `terminiert` before building a
+    `Deadline` at all, and therefore invisible to every corpus run and to the exhaustive
+    field-combination tests.
+    """
+    bound = Schedule(anchor=Anchor(kind="step", steps=[2], event="ÜT"), offset=Offset(amount=11), latest_time="14:00")
+    carries_structure: list[tuple[AlternativeKind, str]] = [
+        ("scheduled", "{≤14:00 11WT nach ÜT#2}"),
+        ("immediate", "{u ≤14:00 11WT nach ÜT#2}"),
+    ]
+    for kind, expected in carries_structure:
+        assert _tag_of(Deadline(alternatives=[DeadlineAlternative(kind=kind, backstop=bound)], raw="x")) == expected
+    # `reference` and `complex` are the only kinds that may render nothing: they are prose, and
+    # `_deadline_note` is what carries them
+    prose: list[AlternativeKind] = ["reference", "complex"]
+    for prose_kind in prose:
+        assert _tag_of(Deadline(alternatives=[DeadlineAlternative(kind=prose_kind)], raw="x")) == ""
+
+
+def test_terminiert_drops_a_direction_that_points_at_nothing() -> None:
+    """`≤2WT nach` is a preposition with no object, which reads as a truncated tag.
+
+    `_bound_core` already refused it; `_terminiert_core` did not, and the two cores disagreeing
+    about the same question was the one piece of that divergence fixable without deciding how
+    `established_by` should render. 0 of the 23 `terminiert` rows at dataset v0.0.20 set a
+    direction with neither a step nor an anchor, so every shipped tag is unchanged.
+    """
+    assert _deadline_tag(DeadlineRule(type="terminiert", business_days=2, direction="nach", raw="x")) == "{≤2WT}"
+    # ... and it is kept wherever it has something to point at
+    with_step = DeadlineRule(type="terminiert", business_days=11, direction="nach", reference_step=2, raw="x")
+    assert _deadline_tag(with_step) == "{≤11WT nach #2}"
 
 
 def test_tag_of_joins_every_alternative_of_a_conditional_frist() -> None:

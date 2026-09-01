@@ -239,6 +239,11 @@ def test_the_legend_defines_every_marker_any_reachable_tag_can_show() -> None:
         "anchor": [None, "Zahlungsziel"],
         "direction": [None, "vor"],
         "recurring": [False, True],
+        # `recurrence` is a separate field from `recurring`, and the one that distinguishes
+        # werktäglich from täglich — `deadline_from_rule`'s `recurring` fallback only ever
+        # synthesizes "täglich", so leaving it out meant this enumeration never produced a
+        # `werktäglich` tag at all while its docstring claimed to cover the field combinations.
+        "recurrence": [None, "werktäglich"],
     }
     seen: set[str] = set()
     for combo in itertools.product(*fields.values()):
@@ -255,7 +260,17 @@ def test_the_legend_defines_every_marker_any_reachable_tag_can_show() -> None:
                     assert entry in text, f"{tag} shows {what} and the legend does not define {entry}"
     # the enumeration has to have reached the shapes this is about, or it proves nothing
     assert len(seen) > 40
-    for tag in ("{u}", "{u ÜZ#3}", "{u ≤2WT vor #3}", "{u ≤14:00}", "{∥#3}", "{≤Zahlungsziel}", "{terminiert}"):
+    for tag in (
+        "{u}",
+        "{u ÜZ#3}",
+        "{u ≤2WT vor #3}",
+        "{u ≤14:00}",
+        "{u werktäglich}",
+        "{∥#3}",
+        "{≤Zahlungsziel}",
+        "{werktäglich ≤14:00}",
+        "{terminiert}",
+    ):
         assert tag in seen, tag
     assert any(re.search(r"^\{u [^}]*#[\d/]+ .*(täglich|werktäglich)", t) for t in seen) or any(
         re.search(r"^\{u [^}]*(täglich|werktäglich).*≤", t) for t in seen

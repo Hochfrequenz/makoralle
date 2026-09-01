@@ -150,9 +150,11 @@ def _alternative_core(alt: DeadlineAlternative) -> str:
     old code let the first structured field it found evict the ``u`` entirely.
 
     ``reference`` and ``complex`` return "": they are prose, and ``_deadline_note`` is where
-    they are surfaced. A ``scheduled`` branch returns "" too — :func:`_deadline_tag` routes
-    those to :func:`_terminiert_core` off the flat rule, for the reason
-    :func:`_backstop_core` gives.
+    they are surfaced. A ``scheduled`` branch renders its bound and nothing else — no
+    ``scheduled`` alternative reaches here from a flat rule, because :func:`_deadline_tag`
+    routes ``terminiert`` to :func:`_terminiert_core` first for the reason
+    :func:`_backstop_core` gives, but :func:`_tag_of` is a public-ish entry point for step 3
+    and must not have a kind it answers with silence.
     """
     if alt.kind == "parallel":
         # A coupling has one thing to say — which step it is tied to — and `≤` would assert a
@@ -167,6 +169,18 @@ def _alternative_core(alt: DeadlineAlternative) -> str:
             alt.backstop.anchor if alt.backstop else None, or_establishing_step=True, with_event=False
         )
         return f"∥{coupled}"
+    if alt.kind == "scheduled":
+        # Unreached today: `_deadline_tag` special-cases `type == "terminiert"` before it ever
+        # builds a `Deadline`, so all 23 shipped `terminiert` tags keep going through
+        # `_terminiert_core` byte-identically. It exists because :func:`_tag_of` is meant to
+        # become the direct entry point for an ``SDStep.deadline`` the parser of makoralle#57
+        # step 3 fills natively — and without this branch such a deadline rendered NO tag at
+        # all, an arrow silently saying nothing where the source states a hard date. That is
+        # this PR's own defect one level worse, waiting for step 3 to trigger it.
+        # `_scheduled_has_a_backstop` on the model guarantees the backstop; the fallback is an
+        # expression rather than an `assert` because `-O` strips asserts and a library should not
+        # depend on them.
+        return _backstop_core(alt.backstop) if alt.backstop is not None else ""
     if alt.kind != "immediate":
         return ""
     pieces = ["u", _step_anchor_tag(alt.immediacy)]
@@ -237,7 +251,13 @@ def _terminiert_core(rule: DeadlineRule) -> str:
     anchor = f"#{rule.reference_step}" if rule.reference_step else rule.anchor
     if rule.business_days is not None:
         core = f"≤{rule.business_days}WT"
-        if rule.direction:
+        if rule.direction and anchor:
+            # `and anchor`: without an anchor the direction points at nothing, and "≤2WT nach"
+            # reads as a truncation — the same call `_bound_core` makes. Unifying the two cores
+            # outright is still out of scope (they disagree about `established_by` too, and no
+            # corpus row fixes what the target shape should be), but this half is free: 0 of the
+            # 23 `terminiert` rows at v0.0.20 set a direction without an anchor or a step, so
+            # every shipped tag is unchanged.
             core += f" {rule.direction}"
         return f"{core} {anchor}" if anchor else core
     if rule.latest_time:
