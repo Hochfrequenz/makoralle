@@ -1,6 +1,7 @@
 """The structured Frist, and the lift from the flat rule (makoralle#57)."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -450,3 +451,85 @@ def test_an_offset_alone_is_content_enough_for_a_backstop() -> None:
     d = deadline_from_rule(DeadlineRule(type="reference", business_days=3, raw="3 WT."))
     assert d is not None and d.alternatives[0].backstop is not None
     assert d.alternatives[0].backstop.offset == Offset(amount=3, unit="werktage", direction="nach")
+
+
+# --- the invariants a public model should not be able to violate -------------
+#
+# Each of these was reachable before makoralle#58's follow-up. `deadline_from_rule`
+# already avoided all three, but a guard inside one function is not an invariant:
+# #57 step 3 replaces that function with the parser, and the guard would leave
+# with it.
+
+
+def test_a_schedule_must_carry_something() -> None:
+    """The failure this module exists to remove, reachable in one line.
+
+    `Schedule(anchor=Anchor(kind="unanchored"))` used to validate, and
+    `Deadline.states_a_backstop` — a pure presence test — then answered True with
+    nothing behind it, so a consumer would read the step as "hard date present,
+    go check it".
+    """
+    with pytest.raises(ValidationError, match="must carry something"):
+        Schedule(anchor=Anchor(kind="unanchored"))
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: Schedule(anchor=Anchor(kind="unanchored"), offset=Offset(amount=1)),
+        lambda: Schedule(anchor=Anchor(kind="unanchored"), latest_time="07:00"),
+        lambda: Schedule(anchor=Anchor(kind="unanchored"), recurrence="täglich"),
+        lambda: Schedule(anchor=Anchor(kind="unanchored"), subject="ÜT"),
+    ],
+    ids=["offset", "cutoff", "recurrence", "subject"],
+)
+def test_any_single_piece_of_content_is_enough(build: Callable[[], Schedule]) -> None:
+    """Each term of the predicate on its own, so none can be dropped unnoticed —
+    a term masked by the others is a term no test is really covering."""
+    assert build() is not None
+
+
+def test_a_named_anchor_is_content_by_itself() -> None:
+    """The fifth term: an anchor that is not `unanchored` says something even with
+    no offset — "spätester ÜT ist zum angegebenen Zahlungsziel"."""
+    assert Schedule(anchor=Anchor(kind="external", name="Zahlungsziel")) is not None
+
+
+def test_time_on_anchor_day_alone_is_not_content() -> None:
+    """It qualifies `latest_time` and means nothing without one, so it must not
+    keep an otherwise empty Schedule alive."""
+    with pytest.raises(ValidationError, match="must carry something"):
+        Schedule(anchor=Anchor(kind="unanchored"), time_on_anchor_day=True)
+
+
+@pytest.mark.parametrize("amount", [0, -1, -61])
+def test_an_offset_amount_must_be_positive(amount: int) -> None:
+    """`direction` already expresses "before", so a negative amount is a second,
+    unvalidated way to say it — and `-5` with `direction="nach"` says both."""
+    with pytest.raises(ValidationError):
+        Offset(amount=amount)
+
+
+@pytest.mark.parametrize("value", ["not a time", "99:99", "25:00", "07:60", "", "7:00", "07:00:00"])
+def test_a_cutoff_must_be_a_clock_time(value: str) -> None:
+    with pytest.raises(ValidationError):
+        Schedule(anchor=Anchor(kind="unanchored"), latest_time=value)
+
+
+@pytest.mark.parametrize("value", ["00:00", "07:00", "23:59", "12:30"])
+def test_a_well_formed_cutoff_is_kept_verbatim(value: str) -> None:
+    assert Schedule(anchor=Anchor(kind="unanchored"), latest_time=value).latest_time == value
+
+
+def test_every_shape_the_corpus_has_still_lifts() -> None:
+    """The tightening must not reject anything real.
+
+    The fixture is the 15 distinct `deadline_rule` shapes the dataset holds, so
+    this is the regression guard for all three validators at once: a constraint
+    that excluded a live shape would fail here rather than in a regeneration.
+    """
+    shapes = json.loads((Path(__file__).parent / "fixtures" / "deadline_rule_shapes.json").read_text("utf-8"))
+    assert shapes, "fixture is empty — this would pass vacuously"
+    for entry in shapes:
+        rule = DeadlineRule(**{k: v for k, v in entry.items() if k != "_where"})
+        deadline_from_rule(rule)  # must not raise
