@@ -1,0 +1,90 @@
+[
+  {
+    "type": "unverzüglich",
+    "recurring": false,
+    "raw": "Unverzüglich.",
+    "_where": "abonnieren_der_marktlokationsscharfen_allokationsliste_gas/abonnieren_der_marktlokationsscharfen_allokationsliste_gas nr 2",
+    "_reason": "complete:immediate",
+    "_coverage": "complete"
+  },
+  {
+    "type": "parallel",
+    "reference_step": 2,
+    "recurring": false,
+    "raw": "Parallel zu Nr. 2.",
+    "_where": "beginn_messstellenbetrieb/beginn_messstellenbetrieb nr 3",
+    "_reason": "complete:parallel",
+    "_coverage": "complete"
+  },
+  {
+    "type": "terminiert",
+    "business_days": 2,
+    "direction": "vor",
+    "anchor": "Bilanzierungsmonat",
+    "recurring": false,
+    "raw": "Spätestens 2 WT vor dem Bilanzierungsmonat.",
+    "_where": "abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone/abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone nr 1",
+    "_reason": "complete:scheduled",
+    "_coverage": "complete"
+  },
+  {
+    "type": "complex",
+    "recurring": false,
+    "raw": "Abmeldung zum Beginn eines Monats mit einer Frist von einem Monat in die Zukunft möglich.",
+    "_where": "abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb/abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb nr 1",
+    "_reason": "opaque:complex",
+    "_coverage": "opaque"
+  },
+  {
+    "type": "reference",
+    "recurring": false,
+    "raw": "1 WT nach Abbestellung der Aggregationsebene RZ.",
+    "_where": "abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone/abbestellung_der_aggregationsebene_der_bilanzkreissummenzeitreihe_auf_ebene_der_regelzone nr 2",
+    "_reason": "opaque:reference",
+    "_coverage": "opaque"
+  },
+  {
+    "type": "unverzüglich",
+    "recurring": false,
+    "raw": "Bei Abrechnung Messstellenbetrieb: Unverzüglich, jedoch spätester ÜT ist der 20. WT nach Beendigung der Durchführung der temporären Fortführung des Messstellenbetriebes. Bei Abrechnung Geräteübernahme: Unverzüglich, jedoch • bei Kauf: spätester ÜT ist der 20. WT nach Überlassung der Einrichtung • bei Nutzungsüberlassung: mindestens einmal pro Jahr, jedoch spätester ÜT ist der 20. WT nach Ende des jeweiligen Abrechnungs zeitraums. Bei Abrechnung Zusatz- bzw. Kontrollablesungen: Unverzüglich, jedoch spätester ÜT ist der 20. WT nach Versand der Zusatz- bzw. Kontrollablesung.",
+    "_where": "abrechnung_von_dienstleistungen/abrechnung_von_dienstleistungen nr 1",
+    "_reason": "partial:conditional",
+    "_coverage": "partial"
+  },
+  {
+    "type": "unverzüglich",
+    "latest_time": "07:00",
+    "business_days": 1,
+    "reference_step": 1,
+    "reference_event": "ÜT",
+    "recurring": false,
+    "raw": "Unverzüglich, jedoch spätester ÜZ ist 07:00 Uhr des 1. WT nach dem ÜT von Nr. 1.",
+    "_where": "lieferbeginn/lieferbeginn nr 2",
+    "_reason": "partial:differing_events",
+    "_coverage": "partial"
+  },
+  {
+    "type": "parallel",
+    "recurring": false,
+    "raw": "Parallel zu Nr. 1 oder 2.",
+    "_where": "beendigung_einer_konfiguration_vom_msb/beendigung_einer_konfiguration_vom_msb nr 3",
+    "_reason": "partial:disjunct_step",
+    "_coverage": "partial"
+  },
+  {
+    "type": "unverzüglich",
+    "recurring": false,
+    "raw": "Unverzüglich, jedoch spätestens bis zum Ablauf des 3. WT nach Eingang der Abmeldung aus Modell 2.",
+    "_where": "abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb/abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb nr 2",
+    "_reason": "partial:dropped_backstop",
+    "_coverage": "partial"
+  },
+  {
+    "type": "unverzüglich",
+    "recurring": false,
+    "raw": "Unverzüglich, jedoch spätester ÜZ ist 2 Stunden nach dem ÜZ von Nr. 1.",
+    "_where": "ermittlung_der_malo-id_der_marktlokation/ermittlung_der_malo-id_der_marktlokation nr 2",
+    "_reason": "partial:non_wt_unit",
+    "_coverage": "partial"
+  }
+]

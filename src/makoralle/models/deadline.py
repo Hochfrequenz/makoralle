@@ -21,6 +21,7 @@ cannot come first: nothing produces ``Deadline`` yet, and a regeneration is expe
 new is the half that needs no re-parse.
 """
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -222,10 +223,29 @@ class DeadlineAlternative(BaseModel):
         return self
 
 
+#: How much of a Frist's prose the structure accounts for.
+#:
+#: The reason this exists: a consumer must be able to tell *"this step has no deadline"*
+#: from *"this step has a deadline nobody has structured"*. Without it, the Fristen whose
+#: stated backstop no structured field holds read as unconstrained, and a conformance suite
+#: passes them silently — a false pass each, which is worse than a reported gap.
+#:
+#: * ``complete`` — the structure holds the whole obligation.
+#: * ``partial``  — structure is present, but the prose states more than it holds (a dropped
+#:   backstop, a condition, a second anchor). Evaluating only the structured part would
+#:   check a *weaker* obligation than the regulation imposes.
+#: * ``opaque``   — nothing checkable: a ``reference`` or ``complex`` alternative.
+Coverage = Literal["complete", "partial", "opaque"]
+
+
 class Deadline(BaseModel):
     """A step's Frist. More than one alternative means the source states a conditional."""
 
     alternatives: list[DeadlineAlternative] = Field(min_length=1)
+    #: How much of :attr:`raw` the structure above accounts for. Defaulted to the safe
+    #: answer rather than the optimistic one: a ``Deadline`` assembled by hand, by a
+    #: consumer or a test, claims nothing about prose it never saw.
+    coverage: Coverage = "partial"
     #: The source's own wording, unchanged. Required, not defaulted: it is the only thing a
     #: human can check against the document, and the only full record until the parser fills
     #: the structure (#57 step 3). A Deadline without it asserts a Frist nobody can verify.
@@ -260,6 +280,88 @@ _KIND_BY_TYPE: dict[str, Literal["immediate", "parallel", "scheduled", "referenc
     "reference": "reference",
     "complex": "complex",
 }
+
+
+#: "jedoch spätester ÜT ist ...", "spätester ÜZ ist ..." — the prose states a hard date.
+_BACKSTOP = re.compile(r"jedoch\s+sp[äa]test|sp[äa]tester\s+(?:ÜT|ÜZ)\s+ist", re.I)
+#: Two or more alternatives selected by a condition, which the flat rule cannot hold.
+_CONDITIONAL = re.compile(r"(?:•.{0,400}•)|\bAnsonsten\b|\bI\.\)|\bII\.\)|Sofern\b.{0,80}\bgilt\s*:", re.S)
+#: "der 1. WT nach dem ÜT von Nr. 3 bzw. 4" — ``reference_step`` holds one step.
+_DISJUNCT_STEP = re.compile(r"Nr\.\s*\d+\s*(?:bzw\.|oder)\s*\d+", re.I)
+#: An offset the flat rule cannot express: ``business_days`` is its only unit.
+_NON_WT_UNIT = re.compile(r"\b\d+\s*Stunden?\b|\b\d+\.?\s*T\b(?![ÜA-Za-zäöü])|Kalendertag", re.I)
+#: "spätester ÜZ ist 15:00 Uhr am ÜT" — the cutoff belongs to the anchor's day.
+_TIME_ON_ANCHOR_DAY = re.compile(r"\d{1,2}:\d{2}\s*Uhr\s+am\b", re.I)
+#: The event THIS step must meet ("spätester ÜT ist ...") and the event the offset is
+#: measured from ("... nach dem ÜZ von Nr. 1"). The flat rule has one field for both.
+_SUBJECT_EVENT = re.compile(r"sp[äa]tester\s+(ÜT|ÜZ)", re.I)
+_ANCHOR_EVENT = re.compile(r"nach\s+dem\s+(ÜT|ÜZ)\s+von\s+Nr", re.I)
+
+#: The downgrade reasons that need nothing but the prose. The two that also need to look at
+#: the lifted structure — a dropped backstop, and a subject event that differs from the
+#: anchor's — stay in :func:`_loss_in` below.
+_LOSS_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (_CONDITIONAL, "several obligations selected by a condition, and one slot to hold them"),
+    (_DISJUNCT_STEP, '"Nr. 3 bzw. 4", where `reference_step` holds one step'),
+    (_NON_WT_UNIT, "Stunden or Kalendertage, where `business_days` is the only unit"),
+    (_TIME_ON_ANCHOR_DAY, '"15:00 Uhr am ÜT" — no slot for which day the cutoff falls on'),
+)
+
+
+def coverage_of(rule: DeadlineRule, alternative: DeadlineAlternative) -> Coverage:
+    """How much of ``rule.raw`` the lifted ``alternative`` accounts for.
+
+    The **only** prose-reading in the lift, and it can only ever downgrade
+    ``complete`` -> ``partial``. That asymmetry is what makes it a conservative marker
+    rather than a second parser: every pattern below names a construct the flat
+    :class:`~makoralle.models.process.DeadlineRule` provably cannot hold, so a match is
+    evidence of loss, and a non-match is never taken as evidence of fidelity.
+
+    This lived in makuna's dataset converter, where its own comment asked to be deleted
+    "when makoralle#57 lands". It moves here ahead of that because it has to: a consumer
+    reading the structured shape needs the marker in the same object, and a second copy
+    beside every consumer is how the four measurements in this module's docstring came to
+    disagree in the first place. makuna now delegates instead of reimplementing.
+
+    Retire it — not the field — when the parser fills the structure natively: at that point
+    ``partial`` should come from the parser saying what it could not represent, rather than
+    from this function recognizing seven shapes.
+    """
+    if alternative.kind in ("reference", "complex"):
+        return "opaque"
+    return "complete" if _loss_in(rule.raw or "", alternative) is None else "partial"
+
+
+def _loss_in(raw: str, alternative: DeadlineAlternative) -> str | None:
+    """Why ``raw`` says more than ``alternative`` holds, or ``None`` when it does not.
+
+    Returns the reason rather than a bool so that a caller debugging one Frist — or a test
+    asserting *which* construct it caught — does not have to re-run the patterns by hand.
+    """
+    for pattern, why in _LOSS_PATTERNS:
+        if pattern.search(raw):
+            return why
+    if _BACKSTOP.search(raw):
+        backstop = alternative.backstop
+        if backstop is None or (backstop.offset is None and backstop.latest_time is None):
+            return "a hard date stated in prose and nowhere else"
+
+    # The constrained event and the anchor's event share one field on the flat rule, so when
+    # the prose names both and they DIFFER, whichever the field does not hold is lost.
+    # Marking those `partial` is what lets a consumer read an absent `subject` on a
+    # `complete` Frist as "the same event as the anchor's" — makuna's
+    # `Schedule::constrained_event` relies on exactly that.
+    subject, anchor_event = _SUBJECT_EVENT.search(raw), _ANCHOR_EVENT.search(raw)
+    if subject and anchor_event and subject.group(1).upper() != anchor_event.group(1).upper():
+        return "the constrained event differs from the anchor's, and one field holds both"
+    return None
+
+
+def _lifted(rule: DeadlineRule, alternative: DeadlineAlternative) -> "Deadline":
+    """One place where a lifted alternative becomes a ``Deadline``, so that no return path
+    can forget :func:`coverage_of` — the field's default is deliberately pessimistic, which
+    would make an omission quiet rather than wrong."""
+    return Deadline(alternatives=[alternative], coverage=coverage_of(rule, alternative), raw=rule.raw)
 
 
 def _as_event(value: str | None) -> TransmissionEvent | None:
@@ -375,9 +477,7 @@ def deadline_from_rule(rule: DeadlineRule) -> Deadline | None:
             if (rule.latest_time or recurrence)
             else None
         )
-        return Deadline(
-            alternatives=[DeadlineAlternative(kind=kind, immediacy=anchor, backstop=backstop)], raw=rule.raw
-        )
+        return _lifted(rule, DeadlineAlternative(kind=kind, immediacy=anchor, backstop=backstop))
 
     # Only build a backstop when there is something in it. `reference` and `complex` rules
     # carry no offset, time, step or anchor name — 134 of them at v0.0.20 — and an empty
@@ -409,4 +509,4 @@ def deadline_from_rule(rule: DeadlineRule) -> Deadline | None:
         # can emit is worse than one that says "I could not structure this".
         kind = "complex"
     immediacy = Anchor(kind="unanchored") if rule.type in _IMMEDIATE_TYPES else None
-    return Deadline(alternatives=[DeadlineAlternative(kind=kind, immediacy=immediacy, backstop=backstop)], raw=rule.raw)
+    return _lifted(rule, DeadlineAlternative(kind=kind, immediacy=immediacy, backstop=backstop))

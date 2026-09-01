@@ -3,6 +3,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -533,3 +534,75 @@ def test_every_shape_the_corpus_has_still_lifts() -> None:
     for entry in shapes:
         rule = DeadlineRule(**{k: v for k, v in entry.items() if k != "_where"})
         deadline_from_rule(rule)  # must not raise
+
+
+def _coverage_shapes() -> list[dict[str, Any]]:
+    shapes: list[dict[str, Any]] = json.loads(
+        (Path(__file__).parent / "fixtures" / "deadline_coverage_shapes.json").read_text("utf-8")
+    )
+    assert shapes, "fixture is empty — the assertions below would pass vacuously"
+    return shapes
+
+
+def test_coverage_matches_the_corpus_on_every_verdict_it_produces() -> None:
+    """One real rule per distinct coverage verdict, with the reason it was reached.
+
+    `coverage_of` decides between "the structure holds this whole obligation" and "the
+    prose says more than the structure holds", and getting it wrong in the optimistic
+    direction is the expensive failure: a consumer reads an unconstrained Frist and a
+    conformance suite passes it silently.
+
+    A fixture rather than a live read, for the same reason as
+    `deadline_rule_shapes.json` — makoralle is public, the dataset is not. Run against the
+    whole corpus while porting this from makuna's converter, the verdicts reproduce it
+    exactly: 599 lifted deadlines, 355 `complete` / 110 `partial` / 134 `opaque`, and the
+    kinds 414 immediate / 104 reference / 30 complex / 28 parallel / 23 scheduled.
+    """
+    for entry in _coverage_shapes():
+        where, expected = entry["_where"], entry["_coverage"]
+        rule = DeadlineRule.model_validate({k: v for k, v in entry.items() if not str(k).startswith("_")})
+        lifted = deadline_from_rule(rule)
+        assert lifted is not None, where
+        assert lifted.coverage == expected, f"{where} ({entry['_reason']})"
+
+
+def test_a_reference_or_complex_alternative_is_always_opaque() -> None:
+    """The two kinds that hold nothing checkable, whatever their prose says.
+
+    `reference` is the case that separates "uncheckable" from "needs work": it points at
+    another table or a contract, so it can never be evaluated — but nobody can structure
+    it either, which is why a worklist must not treat it like `complex`.
+    """
+    for kind in ("reference", "complex"):
+        rule = DeadlineRule(type=kind, business_days=2, reference_step=1, raw="1 WT nach dem ÜT von Nr. 1.")
+        lifted = deadline_from_rule(rule)
+        assert lifted is not None and lifted.coverage == "opaque", kind
+
+
+def test_a_cutoff_on_the_anchors_own_day_is_partial() -> None:
+    """ "spätester ÜZ ist 15:00 Uhr am ÜT von Nr. 1" — the time belongs to the anchor's day,
+    and the flat rule has no slot saying so, so `latest_time` alone reads as "15:00 on the
+    offset's day".
+
+    Synthetic, unlike its neighbours: this is the one downgrade reason dataset v0.0.20 does
+    not exercise (0 rows). Kept because the construct is legal MaKo prose and the pattern
+    is cheap; a corpus that grows one must not silently read as `complete`.
+    """
+    rule = DeadlineRule(
+        type="unverzüglich",
+        latest_time="15:00",
+        reference_step=1,
+        reference_event="ÜT",
+        raw="Unverzüglich, jedoch spätester ÜZ ist 15:00 Uhr am ÜT von Nr. 1.",
+    )
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "partial"
+
+
+def test_coverage_defaults_to_partial_rather_than_complete() -> None:
+    """A hand-built `Deadline` claims nothing about prose it never saw.
+
+    The default is the safe direction on purpose: `complete` is the only verdict that lets
+    a consumer act on the structure, so a caller has to say it deliberately.
+    """
+    assert Deadline(alternatives=[DeadlineAlternative(kind="immediate")], raw="x").coverage == "partial"
