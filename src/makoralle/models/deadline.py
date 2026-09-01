@@ -41,7 +41,12 @@ class Offset(BaseModel):
     bare ``business_days: int`` cannot hold them without lying about which calendar applies.
     """
 
-    amount: int
+    #: Positive: the model already has ``direction`` for "before", so a negative
+    #: amount would be a second, unvalidated way to say the same thing — and
+    #: ``-5`` with ``direction="nach"`` says both at once. Every offset in the
+    #: dataset is 1..61 (all 1601 ``deadline_rule`` rows, both the
+    #: ``sequence_diagram`` and ``diagrams[]`` sets), so nothing real is excluded.
+    amount: int = Field(gt=0)
     #: Defaulted, where makoralle#57 has it required: every offset the flat rule can express
     #: is in Werktage (the field is literally ``business_days``), so requiring it would make
     #: the lift restate the only value it can produce — on all 160 offsets across the 906
@@ -119,12 +124,72 @@ class Schedule(BaseModel):
     subject: TransmissionEvent | None = None
     anchor: Anchor
     offset: Offset | None = None
-    latest_time: str | None = None
+    #: A 24-hour wall-clock time, ``HH:MM``. Validated because this is the one
+    #: field of an otherwise machine-checkable model that was a bare string:
+    #: ``"99:99"`` and ``"not a time"`` both used to be accepted, leaving every
+    #: consumer to parse defensively and to decide for itself what a malformed
+    #: value means. The nine distinct values in the dataset all match.
+    latest_time: str | None = Field(default=None, pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
     #: True when ``latest_time`` applies to the anchor's own day rather than to the day the
     #: offset lands on — "15:00 Uhr am ÜT". 15 Frists say this, and without the flag a
     #: consumer computes the clock time against the wrong day.
     time_on_anchor_day: bool = False
     recurrence: Literal["täglich", "werktäglich"] | None = None
+
+    @model_validator(mode="after")
+    def _must_say_something(self) -> "Schedule":
+        """A backstop with nothing in it is the failure this module exists to
+        remove, and it was reachable in one line: ``Schedule(anchor=Anchor(
+        kind="unanchored"))`` validated, and ``Deadline.states_a_backstop`` — a
+        pure presence test — then answered ``True`` with nothing behind it. So a
+        consumer would read the step as "hard date present, go check it".
+
+        ``deadline_from_rule`` already refused to build one, but that guard is a
+        decision inside one function, and #57 step 3 replaces that function with
+        the parser: the invariant would have left with it. ``Anchor`` and
+        ``DeadlineAlternative`` both validate their own coherence; this is the
+        third of the three.
+
+        ``time_on_anchor_day`` deliberately does not count as content — it
+        qualifies ``latest_time`` and means nothing without one.
+        """
+        if not _says_something(
+            subject=self.subject,
+            anchor=self.anchor,
+            offset=self.offset,
+            latest_time=self.latest_time,
+            recurrence=self.recurrence,
+        ):
+            raise ValueError(
+                "a Schedule must carry something: an offset, a cutoff time, a recurrence, "
+                "a subject event, or an anchor that is not 'unanchored'"
+            )
+        return self
+
+
+def _says_something(
+    *,
+    subject: TransmissionEvent | None,
+    anchor: "Anchor",
+    offset: "Offset | None",
+    latest_time: str | None,
+    recurrence: str | None,
+) -> bool:
+    """Whether a would-be [`Schedule`] carries any information at all.
+
+    One predicate, two call sites: [`Schedule._must_say_something`] enforces it as
+    an invariant, and [`deadline_from_rule`] consults it to decide whether to build
+    a backstop in the first place. They are the same question asked at different
+    moments — "may this exist?" and "should I make one?" — and having them drift
+    is how a contentless backstop would come back.
+    """
+    return (
+        offset is not None
+        or bool(latest_time)
+        or recurrence is not None
+        or subject is not None
+        or anchor.kind != "unanchored"
+    )
 
 
 class DeadlineAlternative(BaseModel):
@@ -325,8 +390,12 @@ def deadline_from_rule(rule: DeadlineRule) -> Deadline | None:
     # on input it used to handle. v0.0.20 happens to contain no such rule, so the corpus run
     # stays clean and says nothing about it; the upstream is a non-deterministic Vision
     # stage, so "not in today's corpus" is not a guarantee.
-    has_content = (
-        offset is not None or rule.latest_time or recurrence or subject is not None or anchor.kind != "unanchored"
+    has_content = _says_something(
+        subject=subject,
+        anchor=anchor,
+        offset=offset,
+        latest_time=rule.latest_time,
+        recurrence=recurrence,
     )
     backstop = (
         Schedule(subject=subject, anchor=anchor, offset=offset, latest_time=rule.latest_time, recurrence=recurrence)
