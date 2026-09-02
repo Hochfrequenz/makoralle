@@ -4,13 +4,13 @@ import re
 import yaml
 
 from makoralle.models.process import DeadlineRule
+from makoralle.notation import deadline_tag
 from makoralle.serialization.markdown import (
     _deadline_legend,
     _render_sd_table,
     _render_sequence_diagram,
     yaml_to_markdown,
 )
-from makoralle.serialization.wsd import _deadline_tag
 
 
 def test_yaml_to_markdown() -> None:
@@ -250,7 +250,7 @@ def test_the_legend_defines_every_marker_any_reachable_tag_can_show() -> None:
         kwargs = dict(zip(fields.keys(), combo, strict=True))
         for rule_type in ("unverzüglich", "parallel", "terminiert"):
             rule = {"type": rule_type, "raw": "Unverzüglich nach Nr. 3.", **kwargs}
-            tag = _deadline_tag(DeadlineRule.model_validate(rule))
+            tag = deadline_tag(DeadlineRule.model_validate(rule))
             if not tag or tag in seen:
                 continue
             seen.add(tag)
