@@ -26,6 +26,10 @@ and a transmission event named without its step, which makuna's model rejected o
 so took the whole diagram down rather than one tag. A corpus ratchet cannot see either.
 """
 
+import itertools
+import json
+from typing import Any
+
 from makoralle.models.deadline import Anchor, Deadline, DeadlineAlternative, Schedule, deadline_from_rule
 from makoralle.models.process import DeadlineRule
 
@@ -212,11 +216,30 @@ def deadline_tag(rule: DeadlineRule | None) -> str:
     """
     if rule is None:
         return ""
-    if rule.type == "terminiert":
-        # Unchanged, deliberately — see _backstop_core.
-        return "{" + _terminiert_core(rule) + "}"
     deadline = deadline_from_rule(rule)
-    return tag_of(deadline) if deadline is not None else ""
+    if deadline is None:
+        return ""
+    if rule.type == "terminiert" and deadline.alternatives[0].kind == "scheduled":
+        # The flat path, unchanged for a rule that structures — see `_backstop_core` for why
+        # the two cores are still separate.
+        #
+        # Gated on the LIFT rather than on the type alone, which it was not. A `terminiert`
+        # rule holding nothing structured lifts to `complex` on purpose ("real, but not
+        # reduced" — `deadline_from_rule` degrades rather than raising), and this function
+        # then drew the bare word `{terminiert}` from the flat type the structure had just
+        # erased. So one structure had two tags: `{terminiert}` reached through a
+        # `terminiert` rule, and `""` — prose, no tag — reached through a `complex` one.
+        # makrake sees only the structure, so it drew nothing and could not have done
+        # otherwise; the notation matrix is what surfaced it, since a tag that is not a
+        # function of the deadline cannot be a parity contract.
+        #
+        # Dropping the marker loses nothing a reader sees: `coverage` is `opaque` for such a
+        # Frist, which is exactly what makes the renderer draw the prose as a note. The word
+        # was a marker that needed its own legend entry to say "look in the note".
+        # Corpus-neutral: 0 of the 23 `terminiert` rules at dataset v0.0.22 fail to lift to
+        # `scheduled`.
+        return "{" + _terminiert_core(rule) + "}"
+    return tag_of(deadline)
 
 
 def tag_of(deadline: Deadline) -> str:
@@ -250,17 +273,117 @@ def _terminiert_core(rule: DeadlineRule) -> str:
     anchor = f"#{rule.reference_step}" if rule.reference_step else rule.anchor
     if rule.business_days is not None:
         core = f"≤{rule.business_days}WT"
-        if rule.direction and anchor:
-            # `and anchor`: without an anchor the direction points at nothing, and "≤2WT nach"
-            # reads as a truncation — the same call `_bound_core` makes. Unifying the two cores
-            # outright is still out of scope (they disagree about `established_by` too, and no
-            # corpus row fixes what the target shape should be), but this half is free: 0 of the
-            # 23 `terminiert` rows at v0.0.20 set a direction without an anchor or a step, so
-            # every shipped tag is unchanged.
-            core += f" {rule.direction}"
+        if anchor:
+            # The word is written whenever there is an anchor for it to point at, and "nach"
+            # when the source did not say which way — because that is the reading everything
+            # downstream already has. :class:`~makoralle.models.deadline.Offset` *defaults*
+            # ``direction`` to "nach" rather than leaving it optional (0 of the 148 offsets at
+            # v0.0.20 say "vor"), so the lift hands makrake a direction on every offset, and
+            # makrake's `offset_tag` spells it out — which left this function the only place a
+            # tag could read "≤1WT #1" for a Frist the diagram drew as "≤1WT nach #1". The
+            # legend defines one entry, `{≤nWT vor|nach Anker}`, for both.
+            #
+            # Corpus-neutral, measured, not assumed: of the 23 `terminiert` rules at dataset
+            # v0.0.22, **0** carry an offset and an anchor without stating a direction, so
+            # every shipped tag is byte-identical. 36 shapes of the notation matrix change,
+            # and they are the 36 that made makoralle and makrake disagree.
+            #
+            # Without an anchor the word is still dropped: "≤2WT nach" points at nothing and
+            # reads as a truncation — the same call `_bound_core` makes.
+            core += f" {rule.direction or 'nach'}"
         return f"{core} {anchor}" if anchor else core
     if rule.latest_time:
         return f"≤{rule.latest_time} {anchor}" if anchor else f"≤{rule.latest_time}"
     if anchor:
         return f"≤{anchor}"
     return "terminiert"
+
+
+#: Every value each ``DeadlineRule`` field can take, as far as the notation can tell them
+#: apart. Two amounts, not one, because a tag interpolates the number and a port that
+#: hard-coded it would still pass; two clock times would prove nothing more, so there is one.
+#: ``recurring``/``recurrence`` move together because the flat model spells one claim in two
+#: fields, and the lift reads the pair (a bare ``recurring: True`` predates ``recurrence``).
+_MATRIX_FIELDS: dict[str, tuple[Any, ...]] = {
+    "type": ("unverzüglich", "parallel", "none", "complex", "terminiert", "reference"),
+    "latest_time": (None, "07:00"),
+    "business_days": (None, 1, 2),
+    "reference_step": (None, 1),
+    "reference_event": (None, "ÜT", "ÜZ"),
+    "direction": (None, "vor", "nach"),
+    "anchor": (None, "Änderungstermin"),
+}
+#: The (``recurring``, ``recurrence``) pairs the lift distinguishes.
+_MATRIX_RECURRENCE: tuple[tuple[bool, str | None], ...] = ((False, None), (True, "täglich"), (True, "werktäglich"))
+
+
+def tag_matrix() -> list[dict[str, Any]]:
+    """Every Frist shape a flat rule can lift into, paired with the tag it renders as.
+
+    The cross product of :data:`_MATRIX_FIELDS` — 3888 rules — lifted through
+    :func:`~makoralle.models.deadline.deadline_from_rule` and deduplicated by
+    ``(deadline, tag)``, which leaves the distinct *shapes*: about 1800 of them, against the
+    599 the shipped corpus contains and the 23 distinct tag strings it draws.
+
+    **Why a cross product rather than the corpus.** The corpus is one non-deterministic
+    parse of one set of PDFs. Both cross-implementation divergences found when this check
+    was first run had **zero** corpus rows, and neither was exotic: a ``Kalendertage``
+    offset abbreviated ``T`` where the legend defines ``KT``, and a transmission event named
+    without the step it belongs to — which makuna's model rejected outright, taking the
+    whole diagram down rather than one tag. A ratchet over 599 rows cannot see either, and
+    the upstream that decides which shapes appear is a Vision stage, so "no row does this"
+    is a fact about today, not a guarantee.
+
+    Each row is ``{"rule", "deadline", "tag"}``:
+
+    * ``rule`` — the flat ``DeadlineRule``, for a human reading a failure. No consumer
+      reads it; it is provenance, so that "which Fristangabe produces this?" is answerable
+      from the fixture alone.
+    * ``deadline`` — exactly what :mod:`makoralle.serialization.makrake` writes into a
+      render input, ``raw`` excluded and ``None`` fields dropped, so a consumer's
+      deserialization of this row is a real test of its model.
+    * ``tag`` — the tag's **inner text, without the braces**. makrake's
+      ``layout::deadline_tag`` returns the same, and the braces are the renderer's.
+
+    ``""`` is a real answer, kept rather than filtered: ``reference`` and ``complex`` Fristen
+    are prose and draw no tag, and a port that invented one for them would be wrong in the
+    direction a reader notices.
+
+    Rows where the tag is not a function of the deadline would make this useless as a
+    parity contract — the other implementation only ever sees the deadline. There are none,
+    and ``unittests/test_notation.py`` asserts it, which is how the last such shape was
+    found: ``terminiert`` dropped an unstated direction the lift had already defaulted, so
+    two rules that lift identically drew ``≤1WT #1`` and ``≤1WT nach #1``.
+    """
+    rows: list[dict[str, Any]] = []
+    for values in itertools.product(*_MATRIX_FIELDS.values(), _MATRIX_RECURRENCE):
+        fields = dict(zip(_MATRIX_FIELDS, values[:-1], strict=True))
+        recurring, recurrence = values[-1]
+        rule = DeadlineRule(**fields, recurring=recurring, recurrence=recurrence, raw="")
+        lifted = deadline_from_rule(rule)
+        if lifted is None:
+            continue  # `type: none` — no Frist, so no shape and no tag
+        tag = deadline_tag(rule)
+        rows.append(
+            {
+                "rule": rule.model_dump(mode="json", exclude_defaults=True),
+                "deadline": lifted.model_dump(mode="json", exclude_none=True, exclude={"raw"}),
+                "tag": tag.removeprefix("{").removesuffix("}"),
+            }
+        )
+    deduplicated = {json.dumps([r["deadline"], r["tag"]], sort_keys=True, ensure_ascii=False): r for r in rows}
+    return [deduplicated[key] for key in sorted(deduplicated)]
+
+
+def tag_matrix_json() -> str:
+    """:func:`tag_matrix` as the bytes the fixture file holds — one row per line.
+
+    A row per line so that a diff names the shapes that changed instead of the whole file,
+    and sorted keys so that the same notation always produces the same bytes. makuna
+    vendors this (``fixtures/deadline_notation.json``, written by its
+    ``tools/harvest_notation.py``) and makrake reads it from there through its makuna pin.
+    """
+    rows = ",\n".join(
+        json.dumps(row, sort_keys=True, ensure_ascii=False, separators=(",", ":")) for row in tag_matrix()
+    )
+    return f"[\n{rows}\n]\n"

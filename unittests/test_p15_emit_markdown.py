@@ -1,10 +1,8 @@
-import itertools
 import re
 
 import yaml
 
-from makoralle.models.process import DeadlineRule
-from makoralle.notation import deadline_tag
+from makoralle.notation import tag_matrix
 from makoralle.serialization.markdown import (
     _deadline_legend,
     _render_sd_table,
@@ -225,50 +223,37 @@ _MARKERS: list[tuple[str, str, str]] = [
 def test_the_legend_defines_every_marker_any_reachable_tag_can_show() -> None:
     """No arrow may carry a marker the legend beside it does not explain.
 
-    Enumerated over the field combinations a `DeadlineRule` can hold rather than over the corpus,
-    because the corpus is one sample of a non-deterministic Vision stage and this file cannot read
-    it anyway. Both directions are checked: every marker present is defined, and — the half that
-    regressed twice — a combined tag such as `{u #2 täglich}` or `{u täglich ≤2WT nach ÜZ#3}` has
-    *each* of its markers defined, not merely whichever one matched the whole string.
+    Driven by :func:`makoralle.notation.tag_matrix` — the same enumeration makuna and makrake
+    check their port against — rather than by a cross product of its own. It used to hold one:
+    2 values of 8 fields over 3 of the 6 types, which reached 40-odd tags but no `ÜT` anchor, no
+    second offset amount, and neither of the two types that draw no tag at all. One enumeration
+    for the notation means the legend is checked against exactly the shapes the renderers are.
+
+    Both directions are checked: every marker present is defined, and — the half that regressed
+    twice — a combined tag such as `{u #2 täglich}` or `{u täglich ≤2WT nach ÜZ#3}` has *each* of
+    its markers defined, not merely whichever one matched the whole string.
     """
-    fields: dict[str, list[object]] = {
-        "reference_step": [None, 3],
-        "reference_event": [None, "ÜZ"],
-        "business_days": [None, 2],
-        "latest_time": [None, "14:00"],
-        "anchor": [None, "Zahlungsziel"],
-        "direction": [None, "vor"],
-        "recurring": [False, True],
-        # `recurrence` is a separate field from `recurring`, and the one that distinguishes
-        # werktäglich from täglich — `deadline_from_rule`'s `recurring` fallback only ever
-        # synthesizes "täglich", so leaving it out meant this enumeration never produced a
-        # `werktäglich` tag at all while its docstring claimed to cover the field combinations.
-        "recurrence": [None, "werktäglich"],
-    }
     seen: set[str] = set()
-    for combo in itertools.product(*fields.values()):
-        kwargs = dict(zip(fields.keys(), combo, strict=True))
-        for rule_type in ("unverzüglich", "parallel", "terminiert"):
-            rule = {"type": rule_type, "raw": "Unverzüglich nach Nr. 3.", **kwargs}
-            tag = deadline_tag(DeadlineRule.model_validate(rule))
-            if not tag or tag in seen:
-                continue
-            seen.add(tag)
-            text = "\n".join(_deadline_legend({"steps": [{"nr": 1, "deadline_rule": rule}]}))
-            for pattern, entry, what in _MARKERS:
-                if re.search(pattern, tag):
-                    assert entry in text, f"{tag} shows {what} and the legend does not define {entry}"
+    for row in tag_matrix():
+        if not row["tag"]:
+            continue  # `reference` and `complex` are prose; the note carries them
+        tag = "{" + row["tag"] + "}"
+        seen.add(tag)
+        text = "\n".join(_deadline_legend({"steps": [{"nr": 1, "deadline_rule": row["rule"]}]}))
+        for pattern, entry, what in _MARKERS:
+            if re.search(pattern, tag):
+                assert entry in text, f"{tag} shows {what} and the legend does not define {entry}"
     # the enumeration has to have reached the shapes this is about, or it proves nothing
     assert len(seen) > 40
     for tag in (
         "{u}",
-        "{u ÜZ#3}",
-        "{u ≤2WT vor #3}",
-        "{u ≤14:00}",
+        "{u ÜZ#1}",
+        "{u ≤2WT vor #1}",
+        "{u ≤07:00}",
         "{u werktäglich}",
-        "{∥#3}",
-        "{≤Zahlungsziel}",
-        "{werktäglich ≤14:00}",
+        "{∥#1}",
+        "{≤Änderungstermin}",
+        "{werktäglich ≤07:00}",
         "{terminiert}",
     ):
         assert tag in seen, tag

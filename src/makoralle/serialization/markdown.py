@@ -365,8 +365,13 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
             "- `{täglich ≤HH:MM}` / `{werktäglich ≤HH:MM}` — wiederkehrende Frist, täglich bzw. "
             "werktäglich bis spätestens HH:MM (werktäglich ohne Sa/So)"
         )
-    # A `terminiert` rule with nothing structured in it renders the bare word. Undefined before,
-    # which left a legend consisting of a heading and no entries at all.
+    # The bare word, still reachable but by ONE route now: a `terminiert` rule whose only
+    # structured content is the subject event ("spätester ÜT ist …", with no date at all).
+    # Since makoralle#65 `deadline_tag` follows the lift rather than the flat type, so a rule
+    # holding nothing structured lifts to `complex` and draws no tag — where it used to draw
+    # this word from a type the structure had already erased, which gave one structure two
+    # tags. makrake renders the same word for the same shape (`schedule_tag`'s last arm),
+    # which is why the entry stays and the shape sits in the notation matrix.
     if "{terminiert}" in tags:
         lines.append("- `{terminiert}` — terminierte Frist, im Klartext in der Notiz")
     # No entry for `tag_of`'s `{… ; …}` conditional form on purpose: `deadline_tag` cannot
