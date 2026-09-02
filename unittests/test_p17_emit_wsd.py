@@ -5,15 +5,9 @@ import pytest
 
 from makoralle.models.deadline import Anchor, Deadline, DeadlineAlternative, Offset, Schedule
 from makoralle.models.process import DeadlineRule, SDBranch, SDFragment, SDNote, SDStep, SequenceDiagram
+from makoralle.notation import _alternative_core, deadline_tag, tag_of
 from makoralle.review import Severity, review_items
-from makoralle.serialization.wsd import (
-    _alternative_core,
-    _deadline_note,
-    _deadline_tag,
-    _tag_of,
-    _unverzueglich_sentence_beyond_the_tag,
-    emit_wsd,
-)
+from makoralle.serialization.wsd import _deadline_note, _unverzueglich_sentence_beyond_the_tag, emit_wsd
 
 AlternativeKind = Literal["immediate", "parallel", "scheduled", "reference", "complex"]
 
@@ -72,14 +66,14 @@ def test_a_recurrence_alone_is_not_a_bound_and_still_earns_its_note() -> None:
     needs a test rather than a corpus run.
     """
     rule = DeadlineRule(type="unverzüglich", recurring=True, raw="Unverzüglich nach Nr. 2.")
-    assert _deadline_tag(rule) == "{u täglich}"
+    assert deadline_tag(rule) == "{u täglich}"
     assert _unverzueglich_sentence_beyond_the_tag(rule) == "nach Nr. 2"
     assert _deadline_note(_step_with_deadline(rule), ["LF", "NB"]) == (
         "note right of NB: (i) Frist: Unverzüglich nach Nr. 2."
     )
     # a recurrence beside a real bound is different: the `≤` is on the arrow, so no note
     bounded = DeadlineRule(type="unverzüglich", recurring=True, latest_time="14:00", raw="Unverzüglich nach Nr. 2.")
-    assert _deadline_tag(bounded) == "{u täglich ≤14:00}"
+    assert deadline_tag(bounded) == "{u täglich ≤14:00}"
     assert _unverzueglich_sentence_beyond_the_tag(bounded) == ""
 
 
@@ -98,7 +92,7 @@ def test_deadline_note_fires_when_the_tag_states_no_bound() -> None:
         raw="Unverzüglich nach dem ÜZ von Nr. 1, jedoch spätester ÜT ist der 4. WT vor dem "
         "Zahlungsziel in der Rechnung.",
     )
-    assert _deadline_tag(rule) == "{u ÜZ#1}"
+    assert deadline_tag(rule) == "{u ÜZ#1}"
     assert _unverzueglich_sentence_beyond_the_tag(rule).startswith("nach dem ÜZ von Nr. 1, jedoch spätester ÜT")
     # unflagged (i), like `reference`: the sentence is readable and real, just not compact
     assert _deadline_note(_step_with_deadline(rule), ["LF", "NB"]) == (
@@ -478,19 +472,19 @@ def test_emit_step_renders_pid_refs() -> None:
 
 
 def test_deadline_tag_none_and_complex_are_empty() -> None:
-    assert _deadline_tag(None) == ""
-    assert _deadline_tag(DeadlineRule(type="none", raw="")) == ""
+    assert deadline_tag(None) == ""
+    assert deadline_tag(DeadlineRule(type="none", raw="")) == ""
     # complex gets a note elsewhere, never an inline tag
-    assert _deadline_tag(DeadlineRule(type="complex", raw="spätestens 5 WT vor X")) == ""
+    assert deadline_tag(DeadlineRule(type="complex", raw="spätestens 5 WT vor X")) == ""
 
 
 def test_deadline_tag_bare_unverzueglich() -> None:
-    assert _deadline_tag(DeadlineRule(type="unverzüglich", raw="Unverzüglich")) == "{u}"
+    assert deadline_tag(DeadlineRule(type="unverzüglich", raw="Unverzüglich")) == "{u}"
 
 
 def test_deadline_tag_parallel() -> None:
-    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=2, raw="Parallel zu Nr. 2")) == "{∥#2}"
-    assert _deadline_tag(DeadlineRule(type="parallel", raw="Parallel")) == "{∥}"
+    assert deadline_tag(DeadlineRule(type="parallel", reference_step=2, raw="Parallel zu Nr. 2")) == "{∥#2}"
+    assert deadline_tag(DeadlineRule(type="parallel", raw="Parallel")) == "{∥}"
 
 
 def test_deadline_tag_unverzueglich_keeps_the_u_and_marks_the_bound() -> None:
@@ -503,38 +497,38 @@ def test_deadline_tag_unverzueglich_keeps_the_u_and_marks_the_bound() -> None:
     rule = DeadlineRule(
         type="unverzüglich", latest_time="07:00", business_days=1, reference_event="ÜZ", reference_step=5, raw="..."
     )
-    assert _deadline_tag(rule) == "{u ≤07:00 1WT nach ÜZ#5}"
+    assert deadline_tag(rule) == "{u ≤07:00 1WT nach ÜZ#5}"
     # an offset means the fields are the BOUND and the promptness duty is unanchored
     # (`abrechnungsdaten_bilanzkreisabrechnung` nr 2, "Unverzüglich, jedoch spätester ÜT ist der
     # 2. WT nach dem ÜT von Nr. 1.")
     with_offset = DeadlineRule(type="unverzüglich", business_days=2, reference_event="ÜT", reference_step=1, raw="...")
-    assert _deadline_tag(with_offset) == "{u ≤2WT nach ÜT#1}"
+    assert deadline_tag(with_offset) == "{u ≤2WT nach ÜT#1}"
     # no offset means they are the immediacy ANCHOR, so no `≤` — the same two fields, read the
     # other way round, which is the disambiguation `deadline_from_rule` owns
-    assert _deadline_tag(DeadlineRule(type="unverzüglich", reference_event="ÜT", reference_step=1, raw="...")) == (
+    assert deadline_tag(DeadlineRule(type="unverzüglich", reference_event="ÜT", reference_step=1, raw="...")) == (
         "{u ÜT#1}"
     )
     # only a reference step, no clock/event
-    assert _deadline_tag(DeadlineRule(type="unverzüglich", reference_step=5, raw="...")) == "{u #5}"
+    assert deadline_tag(DeadlineRule(type="unverzüglich", reference_step=5, raw="...")) == "{u #5}"
     # business days only: the direction is dropped with no anchor to point at, since "≤3WT nach"
     # reads as a truncation
-    assert _deadline_tag(DeadlineRule(type="unverzüglich", business_days=3, raw="...")) == "{u ≤3WT}"
+    assert deadline_tag(DeadlineRule(type="unverzüglich", business_days=3, raw="...")) == "{u ≤3WT}"
     # a clock with no offset is a bound too
-    assert _deadline_tag(DeadlineRule(type="unverzüglich", latest_time="15:00", raw="...")) == "{u ≤15:00}"
+    assert deadline_tag(DeadlineRule(type="unverzüglich", latest_time="15:00", raw="...")) == "{u ≤15:00}"
     # "vor" survives where the source states it
     vor = DeadlineRule(type="unverzüglich", business_days=4, direction="vor", reference_step=1, raw="...")
-    assert _deadline_tag(vor) == "{u ≤4WT vor #1}"
+    assert deadline_tag(vor) == "{u ≤4WT vor #1}"
     # a recurrence prefixes the bound rather than replacing it — `_terminiert_core` does replace,
     # and is left alone with the rest of `terminiert`
     recurring = DeadlineRule(type="unverzüglich", recurring=True, recurrence="werktäglich", latest_time="14:00", raw="")
-    assert _deadline_tag(recurring) == "{u werktäglich ≤14:00}"
+    assert deadline_tag(recurring) == "{u werktäglich ≤14:00}"
 
 
 def test_deadline_tag_unverzueglich_leaves_a_prose_anchor_to_the_note() -> None:
     """An external anchor is prose — 63 characters for one of them in the corpus — so it stays
     off the arrow and the note carries the whole sentence instead."""
     rule = DeadlineRule(type="unverzüglich", anchor="Kenntnisnahme des Sachverhalts", raw="Unverzüglich nach Kenntnis.")
-    assert _deadline_tag(rule) == "{u}"
+    assert deadline_tag(rule) == "{u}"
     assert _unverzueglich_sentence_beyond_the_tag(rule) == "nach Kenntnis"
 
 
@@ -652,26 +646,26 @@ def test_no_field_combination_renders_less_than_the_flat_tag_did() -> None:
     # a coupling whose step arrives with an anchor name: `deadline_from_rule` files the step as
     # `established_by`, and for a coupling that step IS what the source named
     coupled = DeadlineRule(type="parallel", reference_step=3, anchor="Zahlungsziel", raw="Parallel zu Nr. 3.")
-    assert _deadline_tag(coupled) == "{∥#3}"
+    assert deadline_tag(coupled) == "{∥#3}"
     # ... and one carrying an offset keeps its step too, with no invented `≤`
-    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=3, business_days=2, raw="x")) == "{∥#3}"
+    assert deadline_tag(DeadlineRule(type="parallel", reference_step=3, business_days=2, raw="x")) == "{∥#3}"
     # a recurrence alongside an offset keeps both
     both = DeadlineRule(
         type="unverzüglich", business_days=2, reference_step=3, reference_event="ÜZ", recurring=True, raw="x"
     )
-    assert _deadline_tag(both) == "{u täglich ≤2WT nach ÜZ#3}"
+    assert deadline_tag(both) == "{u täglich ≤2WT nach ÜZ#3}"
     # the `or_establishing_step=False` default: for an `unverzüglich` the step filed as
     # `established_by` says where the anchor's VALUE came from, not what the offset is measured
     # from, so it stays off the arrow — where a coupling renders exactly the same step
     withheld = DeadlineRule(
         type="unverzüglich", reference_step=3, reference_event="ÜT", anchor="Zahlungsziel", raw="Unverzüglich nach X."
     )
-    assert _deadline_tag(withheld) == "{u}"
+    assert deadline_tag(withheld) == "{u}"
     assert _deadline_note(_step_with_deadline(withheld), ["LF", "NB"]) is not None
     # ... and the same fields typed as a coupling DO render it (the asymmetry, pinned both ways)
-    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=3, anchor="Zahlungsziel", raw="x")) == "{∥#3}"
+    assert deadline_tag(DeadlineRule(type="parallel", reference_step=3, anchor="Zahlungsziel", raw="x")) == "{∥#3}"
     # a coupling is tied to a step, not to one of its transmission events
-    assert _deadline_tag(DeadlineRule(type="parallel", reference_step=3, reference_event="ÜT", raw="x")) == "{∥#3}"
+    assert deadline_tag(DeadlineRule(type="parallel", reference_step=3, reference_event="ÜT", raw="x")) == "{∥#3}"
     # an anchor of kind "event" is prose too, so a clock beside it does not silence the note
     evented = DeadlineRule(
         type="unverzüglich", reference_event="ÜT", latest_time="07:00", raw="Unverzüglich nach dem ÜT, bis 07:00."
@@ -682,7 +676,7 @@ def test_no_field_combination_renders_less_than_the_flat_tag_did() -> None:
     via_backstop = DeadlineRule(
         type="unverzüglich", anchor="dem Abschluss des Entsperrauftrags", business_days=2, raw="Unverzüglich, 2 WT."
     )
-    assert _deadline_tag(via_backstop) == "{u ≤2WT}"
+    assert deadline_tag(via_backstop) == "{u ≤2WT}"
     assert _deadline_note(_step_with_deadline(via_backstop), ["LF", "NB"]) is not None
     # an `unverzüglich` anchored to prose keeps the anchor out of the tag — but the note fires
     # even though the clock is a bound, so the anchor survives somewhere
@@ -692,7 +686,7 @@ def test_no_field_combination_renders_less_than_the_flat_tag_did() -> None:
         latest_time="07:00",
         raw="Unverzüglich, spätestens 07:00 Uhr nach dem Abschluss des Entsperrauftrags.",
     )
-    assert _deadline_tag(prose) == "{u ≤07:00}"
+    assert deadline_tag(prose) == "{u ≤07:00}"
     assert _unverzueglich_sentence_beyond_the_tag(prose) == (
         "spätestens 07:00 Uhr nach dem Abschluss des Entsperrauftrags"
     )
@@ -715,12 +709,12 @@ def test_tag_of_never_answers_a_real_deadline_with_silence() -> None:
         ("immediate", "{u ≤14:00 11WT nach ÜT#2}"),
     ]
     for kind, expected in carries_structure:
-        assert _tag_of(Deadline(alternatives=[DeadlineAlternative(kind=kind, backstop=bound)], raw="x")) == expected
+        assert tag_of(Deadline(alternatives=[DeadlineAlternative(kind=kind, backstop=bound)], raw="x")) == expected
     # `reference` and `complex` are the only kinds that may render nothing: they are prose, and
     # `_deadline_note` is what carries them
     prose: list[AlternativeKind] = ["reference", "complex"]
     for prose_kind in prose:
-        assert _tag_of(Deadline(alternatives=[DeadlineAlternative(kind=prose_kind)], raw="x")) == ""
+        assert tag_of(Deadline(alternatives=[DeadlineAlternative(kind=prose_kind)], raw="x")) == ""
 
 
 def test_terminiert_drops_a_direction_that_points_at_nothing() -> None:
@@ -731,10 +725,10 @@ def test_terminiert_drops_a_direction_that_points_at_nothing() -> None:
     `established_by` should render. 0 of the 23 `terminiert` rows at dataset v0.0.20 set a
     direction with neither a step nor an anchor, so every shipped tag is unchanged.
     """
-    assert _deadline_tag(DeadlineRule(type="terminiert", business_days=2, direction="nach", raw="x")) == "{≤2WT}"
+    assert deadline_tag(DeadlineRule(type="terminiert", business_days=2, direction="nach", raw="x")) == "{≤2WT}"
     # ... and it is kept wherever it has something to point at
     with_step = DeadlineRule(type="terminiert", business_days=11, direction="nach", reference_step=2, raw="x")
-    assert _deadline_tag(with_step) == "{≤11WT nach #2}"
+    assert deadline_tag(with_step) == "{≤11WT nach #2}"
 
 
 def test_tag_of_joins_every_alternative_of_a_conditional_frist() -> None:
@@ -756,31 +750,31 @@ def test_tag_of_joins_every_alternative_of_a_conditional_frist() -> None:
             ),
         ],
     )
-    assert _tag_of(deadline) == "{u ; u ≤2WT nach ÜT#1}"
+    assert tag_of(deadline) == "{u ; u ≤2WT nach ÜT#1}"
     # every alternative prose-only: no tag at all rather than an empty "{}"
-    assert _tag_of(Deadline(raw="x", alternatives=[DeadlineAlternative(kind="complex")])) == ""
+    assert tag_of(Deadline(raw="x", alternatives=[DeadlineAlternative(kind="complex")])) == ""
 
 
 def test_deadline_tag_terminiert_wt_before_external_anchor() -> None:
     rule = DeadlineRule(
         type="terminiert", direction="vor", business_days=20, reference_event="ÜT", anchor="Änderungstermin", raw="..."
     )
-    assert _deadline_tag(rule) == "{≤20WT vor Änderungstermin}"
+    assert deadline_tag(rule) == "{≤20WT vor Änderungstermin}"
 
 
 def test_deadline_tag_terminiert_wt_after_reference_step() -> None:
     rule = DeadlineRule(type="terminiert", direction="nach", business_days=11, reference_step=2, raw="...")
-    assert _deadline_tag(rule) == "{≤11WT nach #2}"
+    assert deadline_tag(rule) == "{≤11WT nach #2}"
 
 
 def test_deadline_tag_terminiert_anchor_only() -> None:
     rule = DeadlineRule(type="terminiert", anchor="Zahlungsziel", raw="Spätester ÜT ist zum angegebenen Zahlungsziel.")
-    assert _deadline_tag(rule) == "{≤Zahlungsziel}"
+    assert deadline_tag(rule) == "{≤Zahlungsziel}"
 
 
 def test_deadline_tag_terminiert_recurring_with_time() -> None:
     rule = DeadlineRule(type="terminiert", recurring=True, latest_time="14:00", raw="Täglich … bis spätestens 14 Uhr.")
-    assert _deadline_tag(rule) == "{täglich ≤14:00}"
+    assert deadline_tag(rule) == "{täglich ≤14:00}"
 
 
 def test_emit_appends_deadline_tag_after_pid_suffix() -> None:
@@ -1180,16 +1174,16 @@ def test_deadline_tag_says_werktaeglich_when_the_source_does() -> None:
         latest_time="12:00",
         raw="Werktäglich für den Vortag bzw. Vortage bis 12:00 Uhr.",
     )
-    assert _deadline_tag(werktaeglich) == "{werktäglich ≤12:00}"
+    assert deadline_tag(werktaeglich) == "{werktäglich ≤12:00}"
     taeglich = DeadlineRule(
         type="terminiert", recurring=True, recurrence="täglich", latest_time="13:00", raw="Täglich … 13:00 Uhr."
     )
-    assert _deadline_tag(taeglich) == "{täglich ≤13:00}"
+    assert deadline_tag(taeglich) == "{täglich ≤13:00}"
     # a rule written before the field existed still renders as it did
     legacy = DeadlineRule(type="terminiert", recurring=True, latest_time="14:00", raw="Täglich … 14 Uhr.")
-    assert _deadline_tag(legacy) == "{täglich ≤14:00}"
+    assert deadline_tag(legacy) == "{täglich ≤14:00}"
     # and without a time, the granularity alone
-    assert _deadline_tag(DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")) == (
+    assert deadline_tag(DeadlineRule(type="terminiert", recurring=True, recurrence="werktäglich", raw="…")) == (
         "{werktäglich}"
     )
 
@@ -1532,7 +1526,7 @@ def test_deadline_note_lossy_unverzueglich_gets_its_sentence() -> None:
 def test_deadline_note_lossy_unverzueglich_keeps_its_compact_tag() -> None:
     """The tag is unchanged — this is "tag *and* note", not a replacement for the tag."""
     rule = DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Kenntnisnahme.")
-    assert _deadline_tag(rule) == "{u}"
+    assert deadline_tag(rule) == "{u}"
     assert _deadline_note(_step_with_deadline(rule), ["LF", "NB"]) is not None
 
 

@@ -10,7 +10,8 @@ import yaml
 from makoralle.config import AHB_PID_URL
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
 from makoralle.models.process import REF_PREFIX, DeadlineRule, is_known_actor, is_ref_step
-from makoralle.serialization.wsd import _deadline_tag, _unverzueglich_sentence_beyond_the_tag, span_of_lanes
+from makoralle.notation import deadline_tag
+from makoralle.serialization.wsd import _unverzueglich_sentence_beyond_the_tag, span_of_lanes
 
 logger = logging.getLogger(__name__)
 
@@ -270,10 +271,10 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
     # `diagrams[]` entries at v0.0.20, `main` emits 704 tag lines of which 522 are stale on 146
     # processes (and 160 tags its own legend never defines), and
     # `abmeldung_einer_marktlokation_aus_dem_modell_2_durch_den_nb_lpb`, whose only Frist renders
-    # `{u}`, got every `{u …}` line there is. Deriving the legend from `_deadline_tag` cannot
+    # `{u}`, got every `{u …}` line there is. Deriving the legend from `deadline_tag` cannot
     # drift from the arrows, because it is the function that drew them.
     rules = [DeadlineRule.model_validate(s["deadline_rule"]) for s in steps if s.get("deadline_rule")]
-    tags = {_deadline_tag(rule) for rule in rules}
+    tags = {deadline_tag(rule) for rule in rules}
     tags.discard("")
     has_tags = bool(tags)
     # Matched MARKER BY MARKER, not against the whole tag. A tag composes: `{u #2 täglich}` states
@@ -364,11 +365,16 @@ def _deadline_legend(sd: dict[str, Any]) -> list[str]:
             "- `{täglich ≤HH:MM}` / `{werktäglich ≤HH:MM}` — wiederkehrende Frist, täglich bzw. "
             "werktäglich bis spätestens HH:MM (werktäglich ohne Sa/So)"
         )
-    # A `terminiert` rule with nothing structured in it renders the bare word. Undefined before,
-    # which left a legend consisting of a heading and no entries at all.
+    # The bare word, still reachable but by ONE route now: a `terminiert` rule whose only
+    # structured content is the subject event ("spätester ÜT ist …", with no date at all).
+    # Since makoralle#65 `deadline_tag` follows the lift rather than the flat type, so a rule
+    # holding nothing structured lifts to `complex` and draws no tag — where it used to draw
+    # this word from a type the structure had already erased, which gave one structure two
+    # tags. makrake renders the same word for the same shape (`schedule_tag`'s last arm),
+    # which is why the entry stays and the shape sits in the notation matrix.
     if "{terminiert}" in tags:
         lines.append("- `{terminiert}` — terminierte Frist, im Klartext in der Notiz")
-    # No entry for `_tag_of`'s `{… ; …}` conditional form on purpose: `_deadline_tag` cannot
+    # No entry for `tag_of`'s `{… ; …}` conditional form on purpose: `deadline_tag` cannot
     # produce one, because `deadline_from_rule` always yields exactly one alternative. An entry
     # here would be unreachable and untestable, so it belongs in the makoralle#57 step 3 change
     # that makes the parser fill a second alternative — beside the tests that can then reach it.
