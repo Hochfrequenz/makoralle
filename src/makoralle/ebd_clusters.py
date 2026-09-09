@@ -100,3 +100,43 @@ def backfill_cluster(ebd_id: str, step: dict[str, Any]) -> None:
     for branch in ("if_yes", "if_no"):
         if step.get(f"{branch}_code") and not step.get(f"{branch}_cluster"):
             step[f"{branch}_cluster"] = cluster
+
+
+# Leading words that classify a Codeliste row or a whole Codeliste. A code list carries no
+# `Cluster:` prefix — the classification is in the German wording instead, and the same
+# vocabulary as CLUSTER_KIND applies, so the two cannot drift apart on what "Ablehnung" means.
+CODE_WORD_KIND: dict[str, str] = {
+    "Ablehnung": "rejection",
+    "Abweisung": "rejection",
+    "Ablehnen": "rejection",
+    "Zustimmung": "approval",
+    "Bestätigung": "approval",
+    "Fortführungsbestätigung": "approval",
+    "Bestellbestätigung": "approval",
+    "Statusmeldung": "info",
+    "Mitteilung": "info",
+    "Ankündigung": "info",
+    "Antwort": "info",
+}
+_CODE_WORDS = sorted(CODE_WORD_KIND, key=len, reverse=True)
+
+
+def _kind_from_wording(text: str | None) -> str | None:
+    """The kind a German label announces, or None if it announces nothing."""
+    if not text:
+        return None
+    for word in _CODE_WORDS:
+        if re.search(rf"\b{re.escape(word)}\b", text):
+            return CODE_WORD_KIND[word]
+    return None
+
+
+def derive_code_kind(entry_name: str | None, list_name: str | None = None) -> str:
+    """Classify one Codeliste row as {approval, rejection, info, unknown}.
+
+    The row's own wording wins, so an `Ablehnung …` row inside a Bestätigung list is still
+    a rejection. A row that says nothing either way inherits the list's wording: `ZB6
+    Erforderliche Versicherung fehlt` is a rejection because it can only appear in
+    `S_0056_Ablehnung Anmeldung MSB`.
+    """
+    return _kind_from_wording(entry_name) or _kind_from_wording(list_name) or "unknown"
