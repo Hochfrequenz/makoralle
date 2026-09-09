@@ -4,6 +4,12 @@ Reads per-EBD JSON from `pipeline/09_ebds/E_xxxx.json`, writes:
   - `pipeline/09_ebds/yaml/E_xxxx.yaml`        — per-EBD YAML mirror
   - `pipeline/09_ebds/answer_codes.yaml`       — global (ebd_id, code) → kind index
   - `pipeline/09_ebds/summary/E_xxxx.md`       — human-readable per-EBD summary
+
+Codelisten (`S_xxxx`, `G_xxxx`, `GS_xxx`) ride alongside: their JSON is read from the same
+directory and mirrored to `yaml/<list_id>.yaml`. They also appear in `answer_codes.yaml`,
+keyed by list id — but a code-list entry is `{hint, kind}` only. It has no `cluster` (the
+document tags no cluster on these tables) and no `steps` (a code list *is* the decision,
+so there is no step to point at), and inventing either would be a fiction.
 """
 
 import json
@@ -15,6 +21,9 @@ from typing import Any
 import yaml
 
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
+
+# Codeliste ids by prefix: S_ (Strom), G_/GS_ (Gas).
+CODELISTE_GLOBS = ("S_*.json", "G_*.json", "GS_*.json")
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +39,16 @@ def _resolve_cluster_and_hint(branch_prefix: str, step: dict[str, Any]) -> tuple
 
 def _iter_ebd_json_files(ebd_dir: Path) -> Iterator[Path]:
     yield from sorted(ebd_dir.glob("E_*.json"))
+
+
+def _iter_codeliste_json_files(ebd_dir: Path) -> Iterator[Path]:
+    """Every Codeliste JSON in `ebd_dir`, deduplicated (``GS_*`` also matches ``G_*``)."""
+    seen: set[Path] = set()
+    for pattern in CODELISTE_GLOBS:
+        for path in ebd_dir.glob(pattern):
+            if path not in seen:
+                seen.add(path)
+                yield path
 
 
 def _load_ebd(path: Path) -> dict[str, Any]:
@@ -85,7 +104,16 @@ def build_answer_codes_index(ebd_dir: Path) -> dict[str, dict[str, dict[str, Any
             entry["steps"].sort()
         if codes:
             index[ebd_id] = codes
-    logger.info("Built answer-codes index: %d EBDs, %d codes", len(index), sum(len(v) for v in index.values()))
+    for path in sorted(_iter_codeliste_json_files(ebd_dir)):
+        liste = _load_ebd(path)
+        entries = {
+            entry["code"]: {"hint": entry.get("name"), "kind": entry.get("kind", "unknown")}
+            for entry in liste.get("codes", [])
+            if entry.get("code")
+        }
+        if entries:
+            index[liste["id"]] = entries
+    logger.info("Built answer-codes index: %d lists, %d codes", len(index), sum(len(v) for v in index.values()))
     return index
 
 
@@ -128,6 +156,23 @@ def write_per_ebd_yaml(ebd_dir: Path) -> list[Path]:
         )
         written.append(out_path)
     logger.info("Wrote %d per-EBD YAML files to %s", len(written), out_dir)
+    return written
+
+
+def write_per_codeliste_yaml(ebd_dir: Path) -> list[Path]:
+    """Write `<ebd_dir>/yaml/<list_id>.yaml` for every Codeliste JSON in `ebd_dir`."""
+    out_dir = ebd_dir / "yaml"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    for path in sorted(_iter_codeliste_json_files(ebd_dir)):
+        liste = _load_ebd(path)
+        out_path = out_dir / f"{liste['id']}.yaml"
+        out_path.write_text(
+            yaml.dump(_strip_nulls(liste), allow_unicode=True, sort_keys=False, default_flow_style=False),
+            encoding="utf-8",
+        )
+        written.append(out_path)
+    logger.info("Wrote %d per-Codeliste YAML files to %s", len(written), out_dir)
     return written
 
 
@@ -177,4 +222,5 @@ def emit_all(ebd_dir: Path) -> None:
     """Run all three emitters against `ebd_dir`."""
     write_answer_codes_index(ebd_dir)
     write_per_ebd_yaml(ebd_dir)
+    write_per_codeliste_yaml(ebd_dir)
     write_per_ebd_summary(ebd_dir)

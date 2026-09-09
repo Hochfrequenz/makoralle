@@ -35,6 +35,8 @@ def process_to_yaml(process: Process) -> str:
         data["diagrams"] = [d.model_dump(exclude_none=True) for d in process.diagrams]
     if process.decision_trees:
         data["decision_trees"] = [_dump(dt) for dt in process.decision_trees]
+    if process.codelisten:
+        data["codelisten"] = [_dump(cl) for cl in process.codelisten]
     if process.pid_mappings:
         data["pid_mappings"] = [_dump(p) for p in process.pid_mappings]
     if process.activity_diagram:

@@ -197,6 +197,7 @@ class Process(BaseModel):
     sequence_diagram: SequenceDiagram | None = None
     diagrams: list[NamedSD] = []
     decision_trees: list[Any] = []
+    codelisten: list[Any] = []
     pid_mappings: list[Any] = []
     activity_diagram: dict[str, Any] | None = None
     related_processes: list[CrossReference] = []
