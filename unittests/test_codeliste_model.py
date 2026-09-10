@@ -54,3 +54,21 @@ def test_codeliste_without_a_parent_section_is_allowed() -> None:
 def test_codeliste_requires_an_id() -> None:
     with pytest.raises(ValueError):
         Codeliste(name="nameless", codes=[])  # type: ignore[call-arg]
+
+
+def test_codeliste_names_the_section_it_sits_under() -> None:
+    """``ebd_id`` alone looked like a link and led nowhere: all 26 lists that carry one in dataset
+    v0.0.28 sit under a section whose whole content is its code lists, so no decision tree ships
+    for it. The title says what the section decides, without implying a file exists."""
+    liste = Codeliste(
+        id="S_0056",
+        name="Ablehnung Anmeldung MSB",
+        ebd_id="E_0201",
+        ebd_name="Anmeldung Messstellenbetrieb prüfen",
+        codes=[],
+    )
+    assert liste.ebd_name == "Anmeldung Messstellenbetrieb prüfen"
+
+
+def test_a_list_under_no_section_has_no_section_name() -> None:
+    assert Codeliste(id="S_0086", name="Bestätigung Anfrage Stornierung", codes=[]).ebd_name is None

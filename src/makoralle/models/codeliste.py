@@ -22,10 +22,19 @@ class CodeEntry(BaseModel):
 
 
 class Codeliste(BaseModel):
-    """A full answer-code table: identity/metadata plus its rows."""
+    """A full answer-code table: identity/metadata plus its rows.
+
+    ``ebd_id`` and ``ebd_name`` name the EBD section of the document the list sits under —
+    ``8.2.1 E_0201_Anmeldung Messstellenbetrieb prüfen`` for ``S_0055``/``S_0056``. A section like
+    that holds nothing but its code lists: it has **no decision tree**, so no ``E_*`` file exists
+    for ``ebd_id`` and the list itself is the decision. In EBD und Codelisten 4.1 that is true of
+    every list with a parent section, so treat ``ebd_id`` as a label, not a link; ``ebd_name`` says
+    what the section decides. Both are ``None`` for a list that sits under no EBD section.
+    """
 
     id: str
     name: str
     source: str = ""
     ebd_id: str | None = None
+    ebd_name: str | None = None
     codes: list[CodeEntry]
