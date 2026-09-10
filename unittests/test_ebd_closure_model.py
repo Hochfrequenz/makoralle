@@ -5,13 +5,14 @@ Dataset v0.0.29 shipped 146 branch targets that were no step and 281 branches th
 parser repairs are makorele's; these fields are what lets the result be stated rather than implied.
 """
 
-from typing import Any
+import datetime
+from typing import Any, get_args
 
 import pytest
 from pydantic import BaseModel, ValidationError
 
 from makoralle.models.codeliste import CodeEntry, Codeliste
-from makoralle.models.ebd import DecisionStep, DecisionTree, StepRef
+from makoralle.models.ebd import BRANCH_FIELDS, DecisionStep, DecisionTree, StepRef, TreeKind
 from makoralle.models.source import SourceDocument
 
 EBD_4_1 = SourceDocument(file_name="EBD_und_Codelisten_4_1_Fehlerkorrektur_20260116.pdf", date="2026-01-16")
@@ -108,7 +109,22 @@ def test_a_use_other_ebd_stub_names_the_tree_to_follow() -> None:
     ],
 )
 def test_every_tree_kind_is_accepted(kind: str) -> None:
-    assert DecisionTree(id="E_0001", name="x", kind=kind).kind == kind  # type: ignore[arg-type]
+    content = {"codelist_only": {"codelisten": ["S_0055"]}, "use_other_ebd": {"use_ebd": "E_0539"}}.get(kind, {})
+    assert DecisionTree.model_validate({"id": "E_0001", "name": "x", "kind": kind, **content}).kind == kind
+
+
+@pytest.mark.parametrize(
+    ("kind", "content", "message"),
+    [
+        ("use_other_ebd", {}, "names the EBD to use"),
+        ("use_other_ebd", {"use_ebd": ""}, "names the EBD to use"),
+        ("codelist_only", {}, "names its lists"),
+        ("codelist_only", {"codelisten": []}, "names its lists"),
+    ],
+)
+def test_a_stub_that_points_nowhere_is_refused(kind: str, content: dict[str, object], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        DecisionTree.model_validate({"id": "E_0541", "name": "x", "kind": kind, **content})
 
 
 @pytest.mark.parametrize("kind", ["", "stub", "codelist-only", "no_tree"])
@@ -143,13 +159,37 @@ def test_a_source_document_date_is_optional() -> None:
     assert SourceDocument(file_name="x.pdf").date is None
 
 
-@pytest.mark.parametrize("date", ["16.01.2026", "2026-1-16", "20260116", 20260116])
+def test_a_source_document_date_yaml_read_as_a_date_is_taken_back_as_iso() -> None:
+    """``date: 2026-01-16`` unquoted is a ``datetime.date`` to PyYAML."""
+    liste = SourceDocument.model_validate({"file_name": "x.pdf", "date": datetime.date(2026, 1, 16)})
+    assert liste.date == "2026-01-16"
+
+
+@pytest.mark.parametrize(
+    "date", ["16.01.2026", "2026-1-16", "20260116", 20260116, "x2026-01-16", "2026-01-16T00:00", "２０２６-01-16"]
+)
 def test_a_source_document_date_that_is_not_iso_is_refused(date: object) -> None:
     with pytest.raises(ValidationError):
         SourceDocument.model_validate({"file_name": "x.pdf", "date": date})
 
 
-@pytest.mark.parametrize("sunset", ["01.04.2026, 00:00 Uhr", "01.04.2026 00:00 Uhr", "2026-04-01", "Offen", 20260401])
+@pytest.mark.parametrize(
+    "sunset",
+    [
+        "01.04.2026, 00:00 Uhr",
+        "01.04.2026 00:00 Uhr",
+        "2026-04-01",
+        "Offen",
+        20260401,
+        "x2026-04-01T00:00",
+        "2026-04-01T00:00 Uhr",
+        "nicht offen",
+        "offen.",
+        "2026-04-01 00:00",
+        "2026-04-01T00",
+        "٢٠٢٦-٠٤-٠١T٠٠:٠٠",
+    ],
+)
 @pytest.mark.parametrize("branch", ["if_yes_sunset", "if_no_sunset"])
 def test_a_sunset_the_parser_did_not_normalise_is_refused(branch: str, sunset: object) -> None:
     with pytest.raises(ValidationError):
@@ -181,9 +221,29 @@ def test_next_and_a_branch_target_exclude_each_other(branch: dict[str, int]) -> 
         DecisionStep.model_validate({"nr": 105, "check": "x", "next": 110, **branch})
 
 
-def test_next_with_a_leaf_on_a_branch_is_allowed() -> None:
-    """Only a target contradicts ``next``; nothing in 4.1 prints both, and nothing forbids a hint."""
-    assert DecisionStep(nr=105, check="x", next=110, if_yes_hint="x").next == 110
+@pytest.mark.parametrize("field", [field for field in BRANCH_FIELDS if not field.endswith(("_sunset", "yes", "no"))])
+def test_next_excludes_every_leaf_on_a_branch(field: str) -> None:
+    """A row that only moves on has no ja/nein: a code or hint beside ``next`` would draw two exits."""
+    with pytest.raises(ValidationError, match="'next' excludes"):
+        DecisionStep.model_validate({"nr": 105, "check": "x", "next": 110, field: "x"})
+
+
+@pytest.mark.parametrize("field", ["if_yes_sunset", "if_no_sunset"])
+def test_next_excludes_a_sunset_on_a_branch(field: str) -> None:
+    with pytest.raises(ValidationError, match="'next' excludes"):
+        DecisionStep.model_validate({"nr": 105, "check": "x", "next": 110, field: "offen"})
+
+
+def test_branch_fields_are_every_field_of_a_branch() -> None:
+    """Pins the list the validator walks against the model, so a new branch field cannot slip past."""
+    branch_like = {name for name in DecisionStep.model_fields if name.startswith(("if_yes", "if_no"))}
+    assert set(BRANCH_FIELDS) == branch_like
+
+
+def test_a_next_hint_sits_beside_its_next() -> None:
+    """E_0594 105: the Hinweis beside '→ 110' belongs to the row, not to a branch."""
+    step = DecisionStep(nr=105, check="[Adressprüfung]", next=110, next_hint="Aufnahme von 0..n Treffern")
+    assert step.next_hint == "Aufnahme von 0..n Treffern"
 
 
 def test_a_next_hint_needs_its_next() -> None:
@@ -191,7 +251,7 @@ def test_a_next_hint_needs_its_next() -> None:
         DecisionStep.model_validate({"nr": 105, "check": "x", "next_hint": "Aufnahme von 0..n Treffern"})
 
 
-@pytest.mark.parametrize("kind", ["codelist_only", "no_tree_aperak", "use_other_ebd", "unclassified"])
+@pytest.mark.parametrize("kind", [kind for kind in get_args(TreeKind) if kind != "tree"])
 def test_a_stub_with_steps_is_refused(kind: str) -> None:
     with pytest.raises(ValidationError, match="has no steps"):
         DecisionTree.model_validate({"id": "E_1", "name": "x", "kind": kind, "steps": [{"nr": 1, "check": "x"}]})
@@ -201,7 +261,11 @@ def test_a_stub_with_steps_is_refused(kind: str) -> None:
     ("field", "value", "owner"),
     [("use_ebd", "E_0539", "use_other_ebd"), ("codelisten", ["S_0055"], "codelist_only")],
 )
-@pytest.mark.parametrize("kind", ["tree", "no_tree_aperak", "unclassified"])
+@pytest.mark.parametrize("kind", get_args(TreeKind))
 def test_a_stub_field_belongs_to_its_own_kind(field: str, value: object, owner: str, kind: str) -> None:
+    data = {"id": "E_1", "name": "x", "kind": kind, field: value}
+    if kind == owner:
+        assert getattr(DecisionTree.model_validate(data), field) == value
+        return
     with pytest.raises(ValidationError, match=f"belongs to kind '{owner}'"):
-        DecisionTree.model_validate({"id": "E_1", "name": "x", "kind": kind, field: value})
+        DecisionTree.model_validate(data)

@@ -139,3 +139,8 @@ def test_the_step_list_line_for_each_branch_shape(branch: dict[str, Any], line: 
 def test_the_step_list_quotes_what_the_hinweis_says_beside_an_unconditional_row() -> None:
     step = {"nr": 105, "check": "x", "next": 110, "next_hint": "Aufnahme von 0..n Treffern"}
     assert _render_ebd_steps(_tree(step))[-1] == "        - → Step 110 Aufnahme von 0..n Treffern"
+
+
+def test_the_next_hint_is_escaped_like_every_other_step_list_hint() -> None:
+    step = {"nr": 105, "check": "x", "next": 110, "next_hint": 'Treffer "neu"'}
+    assert _render_ebd_steps(_tree(step))[-1] == "        - → Step 110 Treffer 'neu'"

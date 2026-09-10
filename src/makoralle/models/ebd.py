@@ -50,7 +50,14 @@ StepKind = Literal["message_content", "process_history", "external"]
 
 StepRefKind = Literal["segment", "answer_code", "frist", "date"]
 
-Sunset = Annotated[str, StringConstraints(pattern=r"^(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|offen)$")]
+BRANCH_FIELDS = tuple(
+    f"{branch}{part}"
+    for branch in ("if_yes", "if_no")
+    for part in ("", "_result", "_code", "_hint", "_cluster", "_sunset")
+)
+"""Every field a ja/nein branch of a :class:`DecisionStep` carries."""
+
+Sunset = Annotated[str, StringConstraints(pattern=r"^(?:[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}|offen)$")]
 """When a code stops being usable: ISO 8601 local date-time (``"2026-04-01T00:00"``) or ``"offen"``.
 
 The document prints ``01.04.2026 00:00 Uhr`` and ``01.04.2026, 00:00 Uhr``; the pattern refuses both,
@@ -85,9 +92,10 @@ class DecisionStep(BaseModel):
 
     ``next`` is for the rows that have no ja/nein at all -- E_0594's Trefferliste runs
     ``105 [Adressprüfung] → 110`` -- so the target is not written into both branches as if the
-    check had been asked. A step with ``next`` set has neither ``if_yes`` nor ``if_no``, and
-    ``next_hint`` is what the Hinweis column says beside such a row ("Aufnahme von 0..n Treffern in
-    die Trefferliste auf Basis eines Kriteriums"); both are enforced.
+    check had been asked. A step with ``next`` set carries nothing on either branch -- no target,
+    result, code, hint, cluster or sunset -- and ``next_hint`` is what the Hinweis column says beside
+    such a row ("Aufnahme von 0..n Treffern in die Trefferliste auf Basis eines Kriteriums"); both
+    are enforced.
 
     ``*_sunset`` is the branch's ``Nutzungsmöglichkeit Ende:`` (see :data:`Sunset`), and ``None``
     where the document says nothing.
@@ -114,8 +122,8 @@ class DecisionStep(BaseModel):
 
     @model_validator(mode="after")
     def _next_stands_alone(self) -> Self:
-        if self.next is not None and (self.if_yes is not None or self.if_no is not None):
-            raise ValueError(f"step {self.nr}: 'next' excludes 'if_yes'/'if_no'")
+        if self.next is not None and any(getattr(self, field) is not None for field in BRANCH_FIELDS):
+            raise ValueError(f"step {self.nr}: 'next' excludes everything on 'if_yes'/'if_no'")
         if self.next_hint is not None and self.next is None:
             raise ValueError(f"step {self.nr}: 'next_hint' needs 'next'")
         return self
@@ -127,8 +135,10 @@ class DecisionTree(BaseModel):
     ``kind`` says whether there is a tree at all (see :data:`TreeKind`). Everything but ``tree``
     has ``steps == []``; ``codelisten`` lists the code lists a ``codelist_only`` section holds, in
     document order, ``use_ebd`` names the tree a ``use_other_ebd`` section defers to, and ``note``
-    is the section's own sentence, verbatim, for every kind whose body is a sentence. Each of those
-    belongs to its kind only, which is enforced.
+    is the section's own sentence, verbatim, for every kind whose body is a sentence. ``use_ebd`` and
+    ``codelisten`` belong to their own kind only, and that kind cannot do without its field -- a
+    ``use_other_ebd`` stub pointing nowhere is not a statement; both are enforced. ``note`` is not
+    restricted.
 
     ``format_version`` is the document's version (``"4.1"``) and ``source_document`` the file it was
     read from, so a tree can be told apart from the same id in the next Lesefassung.
@@ -154,4 +164,9 @@ class DecisionTree(BaseModel):
             raise ValueError(f"{self.id}: 'use_ebd' belongs to kind 'use_other_ebd', not {self.kind!r}")
         if self.codelisten is not None and self.kind != "codelist_only":
             raise ValueError(f"{self.id}: 'codelisten' belongs to kind 'codelist_only', not {self.kind!r}")
+        # After the ownership checks, so a field on the wrong kind reports that rather than this.
+        if self.kind == "use_other_ebd" and not self.use_ebd:
+            raise ValueError(f"{self.id}: a 'use_other_ebd' section names the EBD to use in 'use_ebd'")
+        if self.kind == "codelist_only" and not self.codelisten:
+            raise ValueError(f"{self.id}: a 'codelist_only' section names its lists in 'codelisten'")
         return self
