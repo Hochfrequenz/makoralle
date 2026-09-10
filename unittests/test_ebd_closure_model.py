@@ -109,7 +109,11 @@ def test_a_use_other_ebd_stub_names_the_tree_to_follow() -> None:
     ],
 )
 def test_every_tree_kind_is_accepted(kind: str) -> None:
-    content = {"codelist_only": {"codelisten": ["S_0055"]}, "use_other_ebd": {"use_ebd": "E_0539"}}.get(kind, {})
+    contents: dict[str, dict[str, object]] = {
+        "codelist_only": {"codelisten": ["S_0055"]},
+        "use_other_ebd": {"use_ebd": "E_0539"},
+    }
+    content = contents.get(kind, {})
     assert DecisionTree.model_validate({"id": "E_0001", "name": "x", "kind": kind, **content}).kind == kind
 
 
