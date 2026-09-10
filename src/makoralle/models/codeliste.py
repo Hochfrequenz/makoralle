@@ -9,6 +9,8 @@ Ablehnungsgründe of a step.
 
 from pydantic import BaseModel
 
+from makoralle.models.source import SourceDocument
+
 
 class CodeEntry(BaseModel):
     """One row of a Codeliste: the code, how it may be used, and what it means."""
@@ -30,6 +32,9 @@ class Codeliste(BaseModel):
     for ``ebd_id`` and the list itself is the decision. In EBD und Codelisten 4.1 that is true of
     every list with a parent section, so treat ``ebd_id`` as a label, not a link; ``ebd_name`` says
     what the section decides. Both are ``None`` for a list that sits under no EBD section.
+
+    ``format_version`` and ``source_document`` say which Lesefassung the list was read from, as on
+    :class:`~makoralle.models.ebd.DecisionTree`.
     """
 
     id: str
@@ -37,4 +42,6 @@ class Codeliste(BaseModel):
     source: str = ""
     ebd_id: str | None = None
     ebd_name: str | None = None
+    format_version: str | None = None
+    source_document: SourceDocument | None = None
     codes: list[CodeEntry]
