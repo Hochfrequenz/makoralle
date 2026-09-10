@@ -5,8 +5,10 @@ Dataset v0.0.29 shipped 146 branch targets that were no step and 281 branches th
 parser repairs are makorele's; these fields are what lets the result be stated rather than implied.
 """
 
+from typing import Any
+
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from makoralle.models.codeliste import CodeEntry, Codeliste
 from makoralle.models.ebd import DecisionStep, DecisionTree, StepRef
@@ -135,3 +137,71 @@ def test_a_v0_0_29_codeliste_still_loads() -> None:
 def test_a_source_document_needs_its_file_name() -> None:
     with pytest.raises(ValidationError):
         SourceDocument.model_validate({"date": "2026-01-16"})
+
+
+def test_a_source_document_date_is_optional() -> None:
+    assert SourceDocument(file_name="x.pdf").date is None
+
+
+@pytest.mark.parametrize("date", ["16.01.2026", "2026-1-16", "20260116", 20260116])
+def test_a_source_document_date_that_is_not_iso_is_refused(date: object) -> None:
+    with pytest.raises(ValidationError):
+        SourceDocument.model_validate({"file_name": "x.pdf", "date": date})
+
+
+@pytest.mark.parametrize("sunset", ["01.04.2026, 00:00 Uhr", "01.04.2026 00:00 Uhr", "2026-04-01", "Offen", 20260401])
+@pytest.mark.parametrize("branch", ["if_yes_sunset", "if_no_sunset"])
+def test_a_sunset_the_parser_did_not_normalise_is_refused(branch: str, sunset: object) -> None:
+    with pytest.raises(ValidationError):
+        DecisionStep.model_validate({"nr": 1, "check": "x", branch: sunset})
+
+
+@pytest.mark.parametrize(
+    ("model", "data"),
+    [
+        (DecisionStep, {"nr": 1, "check": "x", "next": "zehn"}),
+        (DecisionStep, {"nr": 1, "check": "x", "next": 2, "next_hint": 3}),
+        (DecisionTree, {"id": "E_1", "name": "x", "kind": "use_other_ebd", "use_ebd": 539}),
+        (DecisionTree, {"id": "E_1", "name": "x", "note": 1}),
+        (DecisionTree, {"id": "E_1", "name": "x", "kind": "codelist_only", "codelisten": "S_0055"}),
+        (DecisionTree, {"id": "E_1", "name": "x", "format_version": 4.1}),
+        (DecisionTree, {"id": "E_1", "name": "x", "source_document": "EBD.pdf"}),
+        (Codeliste, {"id": "S_1", "name": "x", "codes": [], "format_version": 4.1}),
+        (Codeliste, {"id": "S_1", "name": "x", "codes": [], "source_document": "EBD.pdf"}),
+    ],
+)
+def test_a_new_field_of_the_wrong_type_is_refused(model: type[BaseModel], data: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(data)
+
+
+@pytest.mark.parametrize("branch", [{"if_yes": 3}, {"if_no": 4}, {"if_yes": 3, "if_no": 4}])
+def test_next_and_a_branch_target_exclude_each_other(branch: dict[str, int]) -> None:
+    with pytest.raises(ValidationError, match="'next' excludes"):
+        DecisionStep.model_validate({"nr": 105, "check": "x", "next": 110, **branch})
+
+
+def test_next_with_a_leaf_on_a_branch_is_allowed() -> None:
+    """Only a target contradicts ``next``; nothing in 4.1 prints both, and nothing forbids a hint."""
+    assert DecisionStep(nr=105, check="x", next=110, if_yes_hint="x").next == 110
+
+
+def test_a_next_hint_needs_its_next() -> None:
+    with pytest.raises(ValidationError, match="'next_hint' needs 'next'"):
+        DecisionStep.model_validate({"nr": 105, "check": "x", "next_hint": "Aufnahme von 0..n Treffern"})
+
+
+@pytest.mark.parametrize("kind", ["codelist_only", "no_tree_aperak", "use_other_ebd", "unclassified"])
+def test_a_stub_with_steps_is_refused(kind: str) -> None:
+    with pytest.raises(ValidationError, match="has no steps"):
+        DecisionTree.model_validate({"id": "E_1", "name": "x", "kind": kind, "steps": [{"nr": 1, "check": "x"}]})
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "owner"),
+    [("use_ebd", "E_0539", "use_other_ebd"), ("codelisten", ["S_0055"], "codelist_only")],
+)
+@pytest.mark.parametrize("kind", ["tree", "no_tree_aperak", "unclassified"])
+def test_a_stub_field_belongs_to_its_own_kind(field: str, value: object, owner: str, kind: str) -> None:
+    with pytest.raises(ValidationError, match=f"belongs to kind '{owner}'"):
+        DecisionTree.model_validate({"id": "E_1", "name": "x", "kind": kind, field: value})

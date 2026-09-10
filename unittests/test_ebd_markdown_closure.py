@@ -7,8 +7,14 @@ E_0594's unconditional ``→ 110`` rows and the tree-less ``E_`` stubs all rende
 from typing import Any
 
 import pytest
+import yaml
 
-from makoralle.serialization.markdown import _render_ebd_flowchart, _render_ebd_steps, _render_ebd_stub
+from makoralle.serialization.markdown import (
+    _render_ebd_flowchart,
+    _render_ebd_steps,
+    _render_ebd_stub,
+    yaml_to_markdown,
+)
 
 
 def _tree(*steps: dict[str, Any]) -> dict[str, Any]:
@@ -97,3 +103,39 @@ def test_a_use_other_ebd_stub_quotes_the_document_and_names_the_target() -> None
 def test_every_other_stub_kind_is_named(kind: str) -> None:
     (line,) = _render_ebd_stub({"id": "E_0033", "kind": kind, "steps": []})
     assert line == f"**No decision tree** (`{kind}`)"
+
+
+def test_a_stub_note_is_quoted_verbatim_on_one_line() -> None:
+    """Markdown text, not a mermaid label: no quote swapping, no suspension hyphen glued shut."""
+    (line,) = _render_ebd_stub({"id": "E_0452", "kind": "unclassified", "note": 'Strom- und\nGas "neu"'})
+    assert line == '**No decision tree** (`unclassified`): Strom- und Gas "neu"'
+
+
+def test_a_stub_reaches_the_rendered_page() -> None:
+    doc = {
+        "process": {"id": "p", "name": "P", "source": "", "category": ""},
+        "decision_trees": [
+            {"id": "E_0541", "name": "x", "kind": "use_other_ebd", "use_ebd": "E_0539", "steps": []},
+            {"id": "E_0539", "name": "y", "steps": []},
+        ],
+    }
+    md = yaml_to_markdown(yaml.safe_dump(doc, allow_unicode=True))
+    assert "**Steps:** 0\n\n**No decision tree** (`use_other_ebd`) → E_0539\n\n### E_0539" in md
+
+
+@pytest.mark.parametrize(
+    ("branch", "line"),
+    [
+        ({"if_yes_result": "Ende", "if_yes_code": "A78"}, "        - ✓ → A78 Ende"),
+        ({"if_yes_result": "Ende "}, "        - ✓ → Ende"),
+        ({"if_no_code": "A07", "if_no_result": "Ablehnung"}, "        - ✗ → A07 Ablehnung"),
+        ({"if_yes": 20, "if_yes_hint": "weiter"}, "        - ✓ → Step 20 weiter"),
+    ],
+)
+def test_the_step_list_line_for_each_branch_shape(branch: dict[str, Any], line: str) -> None:
+    assert line in _render_ebd_steps(_tree({"nr": 805, "check": "x", **branch}))
+
+
+def test_the_step_list_quotes_what_the_hinweis_says_beside_an_unconditional_row() -> None:
+    step = {"nr": 105, "check": "x", "next": 110, "next_hint": "Aufnahme von 0..n Treffern"}
+    assert _render_ebd_steps(_tree(step))[-1] == "        - → Step 110 Aufnahme von 0..n Treffern"

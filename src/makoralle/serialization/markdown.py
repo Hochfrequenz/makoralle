@@ -204,7 +204,8 @@ def _render_ebd_steps(dt: dict[str, Any]) -> list[str]:
         lines.extend(_steps_branch(step, "if_yes", "\u2713"))
         lines.extend(_steps_branch(step, "if_no", "\u2717"))
         if isinstance(step.get("next"), int):
-            lines.append(f"        - \u2192 Step {step['next']}")
+            hint = f" {_escape_mermaid(step['next_hint'])}" if step.get("next_hint") else ""
+            lines.append(f"        - \u2192 Step {step['next']}{hint}")
 
     return lines
 
@@ -237,7 +238,9 @@ def _render_ebd_stub(dt: dict[str, Any]) -> list[str]:
         return []
     line = f"**No decision tree** (`{kind}`)"
     if dt.get("note"):
-        line += f": {_escape_mermaid(dt['note'])}"
+        # Verbatim, on one line: this is markdown text, not a mermaid label, and _escape_mermaid
+        # would glue "Strom- und Gas" shut (#50).
+        line += f": {' '.join(dt['note'].split())}"
     if dt.get("use_ebd"):
         line += f" \u2192 {dt['use_ebd']}"
     if dt.get("codelisten"):

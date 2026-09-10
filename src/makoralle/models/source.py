@@ -1,6 +1,10 @@
 """Where a record was read from: the published document, by file and date."""
 
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, StringConstraints
+
+IsoDate = Annotated[str, StringConstraints(pattern=r"^\d{4}-\d{2}-\d{2}$")]
 
 
 class SourceDocument(BaseModel):
@@ -14,4 +18,4 @@ class SourceDocument(BaseModel):
     """
 
     file_name: str
-    date: str | None = None
+    date: IsoDate | None = None

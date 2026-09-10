@@ -10,9 +10,9 @@ with ``steps == []`` and a ``kind`` saying which of those it is, so a process's 
 resolves to a statement instead of to nothing.
 """
 
-from typing import Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints, model_validator
 
 from makoralle.models.source import SourceDocument
 
@@ -40,12 +40,23 @@ TreeKind = Literal[
   are in the EDIFACT format documentation, not in this document.
 * ``unclassified`` -- a section with no tree whose body matches none of the above. It is emitted
   rather than guessed at, and ``note`` carries whatever text there is.
+
+A consumer on an older makoralle refuses a kind it does not know, so a parser meeting a new sentence
+says ``unclassified`` rather than inventing a value.
 """
 
 StepKind = Literal["message_content", "process_history", "external"]
 """What a Prüfschritt examines. Curated by the consumer, never derived: the dataset ships ``None``."""
 
 StepRefKind = Literal["segment", "answer_code", "frist", "date"]
+
+Sunset = Annotated[str, StringConstraints(pattern=r"^(?:\d{4}-\d{2}-\d{2}T\d{2}:\d{2}|offen)$")]
+"""When a code stops being usable: ISO 8601 local date-time (``"2026-04-01T00:00"``) or ``"offen"``.
+
+The document prints ``01.04.2026 00:00 Uhr`` and ``01.04.2026, 00:00 Uhr``; the pattern refuses both,
+so a parser that forgets to normalise fails loudly instead of shipping two spellings. It is a string
+and not a ``datetime`` because the parser writes ``json.dumps(record.model_dump())``.
+"""
 
 
 class StepRef(BaseModel):
@@ -74,11 +85,12 @@ class DecisionStep(BaseModel):
 
     ``next`` is for the rows that have no ja/nein at all -- E_0594's Trefferliste runs
     ``105 [Adressprüfung] → 110`` -- so the target is not written into both branches as if the
-    check had been asked. A step with ``next`` set has neither ``if_yes`` nor ``if_no``.
+    check had been asked. A step with ``next`` set has neither ``if_yes`` nor ``if_no``, and
+    ``next_hint`` is what the Hinweis column says beside such a row ("Aufnahme von 0..n Treffern in
+    die Trefferliste auf Basis eines Kriteriums"); both are enforced.
 
-    ``*_sunset`` is the branch's ``Nutzungsmöglichkeit Ende:`` -- when the code stops being usable.
-    It is an ISO 8601 local date-time (``"2026-04-01T00:00"``, German legal time) or the literal
-    ``"offen"`` where the document says the end is open, and ``None`` where it says nothing.
+    ``*_sunset`` is the branch's ``Nutzungsmöglichkeit Ende:`` (see :data:`Sunset`), and ``None``
+    where the document says nothing.
     """
 
     nr: int
@@ -88,16 +100,25 @@ class DecisionStep(BaseModel):
     if_yes_code: str | None = None
     if_yes_hint: str | None = None
     if_yes_cluster: str | None = None
-    if_yes_sunset: str | None = None
+    if_yes_sunset: Sunset | None = None
     if_no: int | None = None
     if_no_result: str | None = None
     if_no_code: str | None = None
     if_no_hint: str | None = None
     if_no_cluster: str | None = None
-    if_no_sunset: str | None = None
+    if_no_sunset: Sunset | None = None
     next: int | None = None
+    next_hint: str | None = None
     refs: list[StepRef] | None = None
     kind: StepKind | None = None
+
+    @model_validator(mode="after")
+    def _next_stands_alone(self) -> Self:
+        if self.next is not None and (self.if_yes is not None or self.if_no is not None):
+            raise ValueError(f"step {self.nr}: 'next' excludes 'if_yes'/'if_no'")
+        if self.next_hint is not None and self.next is None:
+            raise ValueError(f"step {self.nr}: 'next_hint' needs 'next'")
+        return self
 
 
 class DecisionTree(BaseModel):
@@ -106,7 +127,8 @@ class DecisionTree(BaseModel):
     ``kind`` says whether there is a tree at all (see :data:`TreeKind`). Everything but ``tree``
     has ``steps == []``; ``codelisten`` lists the code lists a ``codelist_only`` section holds, in
     document order, ``use_ebd`` names the tree a ``use_other_ebd`` section defers to, and ``note``
-    is the section's own sentence, verbatim, for every kind whose body is a sentence.
+    is the section's own sentence, verbatim, for every kind whose body is a sentence. Each of those
+    belongs to its kind only, which is enforced.
 
     ``format_version`` is the document's version (``"4.1"``) and ``source_document`` the file it was
     read from, so a tree can be told apart from the same id in the next Lesefassung.
@@ -123,3 +145,13 @@ class DecisionTree(BaseModel):
     format_version: str | None = None
     source_document: SourceDocument | None = None
     steps: list[DecisionStep] = []
+
+    @model_validator(mode="after")
+    def _a_stub_is_a_statement(self) -> Self:
+        if self.kind != "tree" and self.steps:
+            raise ValueError(f"{self.id}: a {self.kind!r} section has no steps")
+        if self.use_ebd is not None and self.kind != "use_other_ebd":
+            raise ValueError(f"{self.id}: 'use_ebd' belongs to kind 'use_other_ebd', not {self.kind!r}")
+        if self.codelisten is not None and self.kind != "codelist_only":
+            raise ValueError(f"{self.id}: 'codelisten' belongs to kind 'codelist_only', not {self.kind!r}")
+        return self
