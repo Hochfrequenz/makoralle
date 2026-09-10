@@ -155,31 +155,39 @@ def _render_ebd_flowchart(dt: dict[str, Any]) -> list[str]:
         nr = step["nr"]
         check = _wrap_text(step.get("check", ""))
         lines.append(f'    s{nr}{{{{"{nr}. {check}"}}}}')
-
-        # Yes branch
-        if step.get("if_yes") and isinstance(step["if_yes"], int):
-            lines.append(f"    s{nr} -->|ja| s{step['if_yes']}")
-        elif step.get("if_yes_code"):
-            code = step["if_yes_code"]
-            result = step.get("if_yes_result", "")
-            cluster = _outcome_cluster(step.get("if_yes_cluster"), step.get("if_yes_hint"))
-            label = _outcome_label(code, cluster, result)
-            lines.append(f'    s{nr} -->|ja| ry{nr}["{_escape_mermaid(label)}"]')
-            lines.append(f"    ry{nr}:::{_outcome_class(cluster, result)}")
-
-        # No branch
-        if step.get("if_no") and isinstance(step["if_no"], int):
-            lines.append(f"    s{nr} -->|nein| s{step['if_no']}")
-        elif step.get("if_no_code"):
-            code = step["if_no_code"]
-            result = step.get("if_no_result", "")
-            cluster = _outcome_cluster(step.get("if_no_cluster"), step.get("if_no_hint"))
-            label = _outcome_label(code, cluster, result)
-            lines.append(f'    s{nr} -->|nein| rn{nr}["{_escape_mermaid(label)}"]')
-            lines.append(f"    rn{nr}:::{_outcome_class(cluster, result)}")
+        lines.extend(_flowchart_branch(step, "if_yes", "ja", "ry"))
+        lines.extend(_flowchart_branch(step, "if_no", "nein", "rn"))
+        if isinstance(step.get("next"), int):
+            lines.append(f"    s{nr} --> s{step['next']}")
 
     lines.append("```")
     return lines
+
+
+def _flowchart_branch(step: dict[str, Any], branch: str, label: str, node: str) -> list[str]:
+    """One branch of a flowchart step: an edge to another step, or an outcome leaf.
+
+    A leaf is drawn for a coded branch and for a branch whose only outcome is its ``*_result`` --
+    ``ja → Ende``, which the document prints without a code (165 cells in EBD und Codelisten 4.1).
+    A branch with neither draws nothing: the source does not say where it leads.
+    """
+    nr = step["nr"]
+    target = step.get(branch)
+    if target and isinstance(target, int):
+        return [f"    s{nr} -->|{label}| s{target}"]
+    code = step.get(f"{branch}_code")
+    result = step.get(f"{branch}_result", "")
+    cluster = _outcome_cluster(step.get(f"{branch}_cluster"), step.get(f"{branch}_hint"))
+    if code:
+        text = _outcome_label(code, cluster, result)
+    elif result and result.strip():
+        text = result.strip()
+    else:
+        return []
+    return [
+        f'    s{nr} -->|{label}| {node}{nr}["{_escape_mermaid(text)}"]',
+        f"    {node}{nr}:::{_outcome_class(cluster, result)}",
+    ]
 
 
 def _render_ebd_steps(dt: dict[str, Any]) -> list[str]:
@@ -193,36 +201,48 @@ def _render_ebd_steps(dt: dict[str, Any]) -> list[str]:
         nr = step["nr"]
         check = _escape_mermaid(step.get("check", ""))
         lines.append(f"    - **Step {nr}:** {check}")
-
-        # Yes outcome
-        if step.get("if_yes") and isinstance(step["if_yes"], int):
-            hint = ""
-            if step.get("if_yes_hint"):
-                hint = f" {_escape_mermaid(step['if_yes_hint'])}"
-            lines.append(f"        - \u2713 \u2192 Step {step['if_yes']}{hint}")
-        elif step.get("if_yes_code"):
-            code = step["if_yes_code"]
-            hint = _escape_mermaid(step.get("if_yes_hint", ""))
-            result = step.get("if_yes_result", "")
-            lines.append(
-                f"        - \u2713 \u2192 {code} {hint}" if hint else f"        - \u2713 \u2192 {code} {result}"
-            )
-
-        # No outcome
-        if step.get("if_no") and isinstance(step["if_no"], int):
-            hint = ""
-            if step.get("if_no_hint"):
-                hint = f" {_escape_mermaid(step['if_no_hint'])}"
-            lines.append(f"        - \u2717 \u2192 Step {step['if_no']}{hint}")
-        elif step.get("if_no_code"):
-            code = step["if_no_code"]
-            hint = _escape_mermaid(step.get("if_no_hint", ""))
-            result = step.get("if_no_result", "")
-            lines.append(
-                f"        - \u2717 \u2192 {code} {hint}" if hint else f"        - \u2717 \u2192 {code} {result}"
-            )
+        lines.extend(_steps_branch(step, "if_yes", "\u2713"))
+        lines.extend(_steps_branch(step, "if_no", "\u2717"))
+        if isinstance(step.get("next"), int):
+            lines.append(f"        - \u2192 Step {step['next']}")
 
     return lines
+
+
+def _steps_branch(step: dict[str, Any], branch: str, mark: str) -> list[str]:
+    """One branch of a step in the detail list; the same three cases as :func:`_flowchart_branch`."""
+    target = step.get(branch)
+    if target and isinstance(target, int):
+        hint = f" {_escape_mermaid(step[f'{branch}_hint'])}" if step.get(f"{branch}_hint") else ""
+        return [f"        - {mark} \u2192 Step {target}{hint}"]
+    code = step.get(f"{branch}_code")
+    hint = _escape_mermaid(step.get(f"{branch}_hint", ""))
+    result = step.get(f"{branch}_result", "")
+    if code:
+        return [f"        - {mark} \u2192 {code} {hint}" if hint else f"        - {mark} \u2192 {code} {result}"]
+    if result and result.strip():
+        leaf = f"        - {mark} \u2192 {result.strip()}"
+        return [f"{leaf} {hint}" if hint else leaf]
+    return []
+
+
+def _render_ebd_stub(dt: dict[str, Any]) -> list[str]:
+    """What stands in for the tree of an ``E_`` id that has none (see :data:`~makoralle.models.ebd.TreeKind`).
+
+    Nothing for a real tree. Otherwise the kind, the section's own sentence verbatim, and whatever
+    it points at: the tree to use instead, or the code lists that make the decision.
+    """
+    kind = dt.get("kind", "tree")
+    if kind == "tree":
+        return []
+    line = f"**No decision tree** (`{kind}`)"
+    if dt.get("note"):
+        line += f": {_escape_mermaid(dt['note'])}"
+    if dt.get("use_ebd"):
+        line += f" \u2192 {dt['use_ebd']}"
+    if dt.get("codelisten"):
+        line += f" Codelisten: {', '.join(dt['codelisten'])}"
+    return [line]
 
 
 def _pid_table(sd: dict[str, Any]) -> list[str]:
@@ -604,6 +624,11 @@ def yaml_to_markdown(  # pylint: disable=too-many-locals,too-many-branches,too-m
             lines.append("")
             lines.append(f"**Role:** {role} | **Steps:** {step_count}")
             lines.append("")
+
+            stub = _render_ebd_stub(dt)
+            if stub:
+                lines.extend(stub)
+                lines.append("")
 
             flowchart = _render_ebd_flowchart(dt)
             if flowchart:
