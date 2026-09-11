@@ -3,6 +3,7 @@ import json
 import pathlib
 from typing import Any
 
+import pytest
 import yaml
 
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
@@ -1115,3 +1116,57 @@ def test_diagram_source_text_is_none_for_an_unknown_key(tmp_path: pathlib.Path) 
     _write(out / "yaml" / "wechsel.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
     assert diagram_source_text(out, "wechsel__geloescht") is None
     assert diagram_source_text(out, "wechsel__lieferant") is not None
+
+
+def test_run_with_a_formatversion_scopes_urls_and_stamps_the_records(tmp_path: pathlib.Path) -> None:
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    _write(out / "sequence_svg" / "abstimmung_der_netzzeitreihe.svg", "<svg/>")
+    _write(out / "bpmn" / "abstimmung_der_netzzeitreihe.svg", "<svg/>")
+
+    run(output_dir=out, webapp_dir=web, fv="FV2604")
+
+    index = json.loads((web / "src" / "data" / "processes.json").read_text("utf-8"))
+    assert index[0]["formatversion"] == "FV2604"
+    detail = json.loads((web / "src" / "data" / "processes" / "abstimmung_der_netzzeitreihe.json").read_text("utf-8"))
+    assert detail["formatversion"] == "FV2604"
+    assert detail["diagrams"][0]["svg"] == "/diagrams/FV2604/sequence/abstimmung_der_netzzeitreihe.svg"
+    assert detail["diagrams"][0]["activitySvg"] == "/diagrams/FV2604/bpmn/abstimmung_der_netzzeitreihe.svg"
+    ads = json.loads((web / "src" / "data" / "activity_diagrams.json").read_text("utf-8"))
+    assert ads[0]["svg"] == "/diagrams/FV2604/bpmn/abstimmung_der_netzzeitreihe.svg"
+    # the files themselves stay where they were: the app puts them under /<FV>/ when it copies
+    assert (web / "public" / "diagrams" / "sequence" / "abstimmung_der_netzzeitreihe.svg").exists()
+
+
+def test_run_without_a_formatversion_keeps_the_unscoped_urls(tmp_path: pathlib.Path) -> None:
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    run(output_dir=out, webapp_dir=web)
+    index = json.loads((web / "src" / "data" / "processes.json").read_text("utf-8"))
+    assert "formatversion" not in index[0]
+    detail = json.loads((web / "src" / "data" / "processes" / "abstimmung_der_netzzeitreihe.json").read_text("utf-8"))
+    assert "formatversion" not in detail
+    assert detail["diagrams"][0]["svg"] == "/diagrams/sequence/abstimmung_der_netzzeitreihe.svg"
+
+
+@pytest.mark.parametrize("bad", ["fv2604", "FV26", "2604"])
+def test_run_rejects_a_malformed_formatversion_before_writing_anything(tmp_path: pathlib.Path, bad: str) -> None:
+    """A guessed value would ship URLs such as ``/diagrams/fv2604/...`` that 404 in the app."""
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    with pytest.raises(ValueError, match=repr(bad)):
+        run(output_dir=out, webapp_dir=web, fv=bad)
+    assert not web.exists()
+
+
+def test_the_builders_stamp_the_formatversion_when_called_directly() -> None:
+    entry = build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True, fv="FV2604")
+    assert entry["formatversion"] == "FV2604"
+    detail = build_detail(SAMPLE, review_notes=[], fv="FV2604")
+    assert detail["formatversion"] == "FV2604"
+    assert detail["diagrams"][0]["svg"] == "/diagrams/FV2604/sequence/abstimmung_der_netzzeitreihe.svg"
+    assert "formatversion" not in build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True)
+    assert "formatversion" not in build_detail(SAMPLE, review_notes=[])
