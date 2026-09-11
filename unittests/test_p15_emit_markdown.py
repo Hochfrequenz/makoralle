@@ -106,7 +106,7 @@ def test_pid_table_links_each_pid_to_ahb() -> None:
         pytest.param(None, "/ahb/current/", id="unbundled-targets-current"),
     ],
 )
-def test_pid_table_pins_the_bundles_formatversion(formatversion: str | None, segment: str) -> None:
+def test_pid_table_links_follow_the_process_formatversion(formatversion: str | None, segment: str) -> None:
     """A bundled process links its own FV's AHB tables; an unbundled one keeps `current`.
 
     The Formatversion sits under ``process:``, the shape ``process_to_yaml`` writes, and only when set.

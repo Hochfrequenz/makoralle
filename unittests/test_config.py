@@ -1,5 +1,7 @@
 import re
 
+import pytest
+
 from makoralle.config import AHB_PID_URL, ahb_pid_url
 
 
@@ -25,3 +27,15 @@ def test_without_a_formatversion_the_link_targets_current() -> None:
 def test_with_a_formatversion_the_link_is_pinned_to_it() -> None:
     """Inside a bundle the pin is the point: the FV2604 corpus links the FV2604 tables."""
     assert ahb_pid_url(55001, "FV2604") == "https://ahb-tabellen.hochfrequenz.de/ahb/FV2604/55001"
+
+
+def test_an_empty_formatversion_means_unbundled() -> None:
+    """Empty is how a record says it belongs to no bundle, the same test ``process_to_yaml`` applies."""
+    assert ahb_pid_url(1, "") == "https://ahb-tabellen.hochfrequenz.de/ahb/current/1"
+
+
+@pytest.mark.parametrize("formatversion", ["fv2604", "FV 2604", "FV26", "FV2604\n"])
+def test_a_malformed_formatversion_raises(formatversion: str) -> None:
+    """Falling back to `current` here would link the newest FV's tables from inside a bundle."""
+    with pytest.raises(ValueError, match=re.escape(repr(formatversion))):
+        ahb_pid_url(55001, formatversion)

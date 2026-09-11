@@ -17,9 +17,10 @@ from typing import Annotated, Self
 import yaml
 from pydantic import BaseModel, StringConstraints, model_validator
 
+from makoralle.config import FORMATVERSION_PATTERN
 from makoralle.models.source import IsoDate, SourceDocument
 
-Formatversion = Annotated[str, StringConstraints(pattern=r"^FV\d{4}$")]
+Formatversion = Annotated[str, StringConstraints(pattern=FORMATVERSION_PATTERN)]
 
 
 class Bundle(BaseModel):
