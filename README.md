@@ -113,8 +113,10 @@ suggests `formatversion`, which is a different field. A `document_version` that 
 `source_document.document_version` is rejected.
 
 `config.ahb_pid_url(pid, formatversion)` pins AHB links to `…/ahb/<FV>/<pid>`, and
-`webapp_export.run(..., fv=…)` scopes diagram URLs to `/diagrams/<FV>/…`. Both reject a non-empty
-value that is not `FV` plus four digits.
+`webapp_export.run(..., fv=…)` scopes diagram URLs to `/diagrams/<FV>/…`. Both raise `ValueError`
+on a value that is not `FV` plus four ASCII digits, but they treat an empty value differently:
+`ahb_pid_url` reads `""` as unbundled and links to `current`, while `run(fv="")` raises. `run` also
+refuses a process record whose own `formatversion` differs from `fv`.
 
 ## Development
 

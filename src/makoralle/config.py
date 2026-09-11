@@ -2,10 +2,11 @@
 
 import re
 
-# A Formatversion's name: "FV" + YYMM. The one definition — the pydantic `Formatversion` type is built
-# from it too, so the model and the link guard cannot drift apart. Kept here, not in the models, so this
-# module stays stdlib-only and importable from anywhere without a cycle.
-FORMATVERSION_PATTERN = r"^FV\d{4}$"
+# A Formatversion's name: "FV" + YYMM in ASCII digits (`\d` would let "FV２６０４" into a URL). The one
+# definition — the pydantic `Formatversion` type is built from it too, so the model and the link guard
+# cannot drift apart. Kept here, not in the models, so this module stays stdlib-only and importable from
+# anywhere without a cycle.
+FORMATVERSION_PATTERN = r"^FV[0-9]{4}$"
 
 _AHB_BASE = "https://ahb-tabellen.hochfrequenz.de/ahb/"
 
@@ -18,6 +19,18 @@ _AHB_BASE = "https://ahb-tabellen.hochfrequenz.de/ahb/"
 AHB_PID_URL = _AHB_BASE + "current/{pid}"
 
 
+def require_formatversion(value: str) -> str:
+    """``value``, if it names a Formatversion; :class:`ValueError` naming it otherwise.
+
+    The one guard for a Formatversion handed in by a caller. What counts as "no Formatversion"
+    differs per call site (``ahb_pid_url`` treats ``""`` as unbundled, ``webapp_export.run``
+    rejects it), so that decision stays with the caller and this only checks a value it got.
+    """
+    if not re.fullmatch(FORMATVERSION_PATTERN, value):
+        raise ValueError(f"not a Formatversion (expected FV + 4 digits, e.g. FV2604): {value!r}")
+    return value
+
+
 def ahb_pid_url(pid: int | str, formatversion: str | None = None) -> str:
     """Deep link to a Prüfidentifikator in the AHB tables.
 
@@ -28,7 +41,5 @@ def ahb_pid_url(pid: int | str, formatversion: str | None = None) -> str:
     bundle would silently link the newest FV's tables.
     """
     if formatversion:
-        if not re.fullmatch(FORMATVERSION_PATTERN, formatversion):
-            raise ValueError(f"not a Formatversion (expected FV + 4 digits, e.g. FV2604): {formatversion!r}")
-        return f"{_AHB_BASE}{formatversion}/{pid}"
+        return f"{_AHB_BASE}{require_formatversion(formatversion)}/{pid}"
     return AHB_PID_URL.format(pid=pid)

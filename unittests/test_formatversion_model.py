@@ -116,7 +116,7 @@ def test_bundles_are_sorted_and_unique() -> None:
         )
 
 
-@pytest.mark.parametrize("bad", ["FV26", "fv2604", "FV26040", "2604"])
+@pytest.mark.parametrize("bad", ["FV26", "fv2604", "FV26040", "2604", "FV２６０４"])
 def test_a_formatversion_is_fv_plus_four_digits(bad: str) -> None:
     with pytest.raises(ValidationError):
         Bundle.model_validate({"fv": bad, "documents": {}})

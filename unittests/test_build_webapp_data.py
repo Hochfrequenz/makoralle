@@ -1191,7 +1191,7 @@ def test_run_without_a_formatversion_keeps_the_unscoped_urls(tmp_path: pathlib.P
     assert detail["diagrams"][0]["svg"] == "/diagrams/sequence/abstimmung_der_netzzeitreihe.svg"
 
 
-@pytest.mark.parametrize("bad", ["fv2604", "FV26", "2604", ""])
+@pytest.mark.parametrize("bad", ["fv2604", "FV26", "2604", "", "FV２６０４"])
 def test_run_rejects_a_malformed_formatversion_before_writing_anything(tmp_path: pathlib.Path, bad: str) -> None:
     """A guessed value would ship URLs such as ``/diagrams/fv2604/...`` that 404 in the app."""
     out = tmp_path / "output"
@@ -1210,3 +1210,33 @@ def test_the_builders_stamp_the_formatversion_when_called_directly() -> None:
     assert detail["diagrams"][0]["svg"] == "/diagrams/FV2604/sequence/abstimmung_der_netzzeitreihe.svg"
     assert "formatversion" not in build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True)
     assert "formatversion" not in build_detail(SAMPLE, review_notes=[])
+
+
+def test_run_refuses_a_record_of_another_formatversion_before_writing_anything(tmp_path: pathlib.Path) -> None:
+    """A miswired per-bundle loop (FV2510 records exported as FV2604) must not stamp the wrong version."""
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    record = copy.deepcopy(SAMPLE)
+    record["process"]["formatversion"] = "FV2510"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(record, allow_unicode=True))
+    with pytest.raises(ValueError, match="abstimmung_der_netzzeitreihe") as raised:
+        run(output_dir=out, webapp_dir=web, fv="FV2604")
+    assert "'FV2510'" in str(raised.value)
+    assert "'FV2604'" in str(raised.value)
+    assert not web.exists()
+
+
+@pytest.mark.parametrize("record_fv", [None, "FV2604"])
+def test_run_exports_a_record_that_carries_no_or_the_same_formatversion(
+    tmp_path: pathlib.Path, record_fv: str | None
+) -> None:
+    """``None``: an unregenerated corpus whose records predate the field still exports under ``fv``."""
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    record = copy.deepcopy(SAMPLE)
+    if record_fv:
+        record["process"]["formatversion"] = record_fv
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(record, allow_unicode=True))
+    assert run(output_dir=out, webapp_dir=web, fv="FV2604") == 1
+    index = json.loads((web / "src" / "data" / "processes.json").read_text("utf-8"))
+    assert index[0]["formatversion"] == "FV2604"

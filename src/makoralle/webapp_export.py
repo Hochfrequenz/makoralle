@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import shutil
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -17,7 +16,7 @@ from typing import Any, NamedTuple
 
 import yaml
 
-from makoralle.config import FORMATVERSION_PATTERN
+from makoralle.config import require_formatversion
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.ref_links import build_ref_map, load_ref_overrides, resolve_ref
 from makoralle.review import ReviewItem, is_actionable, review_items
@@ -461,16 +460,26 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     ``fv`` is the Formatversion this ``output_dir`` was built for; it scopes every URL the
     app resolves (``/diagrams/<FV>/...``) and stamps ``formatversion`` on index and detail
     records. ``None`` exports an unbundled corpus exactly as before. A value that is not
-    ``FV`` + four digits raises :class:`ValueError` before anything is written: the caller
-    would otherwise ship URLs the app 404s on.
+    ``FV`` + four digits (``""`` included) raises :class:`ValueError` before anything is
+    written: the caller would otherwise ship URLs the app 404s on. So does a process record
+    whose own ``formatversion`` names a different one — a miswired per-bundle loop must not
+    stamp the wrong Formatversion; a record carrying none (an unregenerated corpus) exports.
     """
-    if fv is not None and not re.fullmatch(FORMATVERSION_PATTERN, fv):
-        raise ValueError(f"not a Formatversion (expected FV + 4 digits, e.g. FV2604): {fv!r}")
+    if fv is not None:
+        require_formatversion(fv)
     seq_svg, bpmn_svg = (output_dir / "sequence_svg", output_dir / "bpmn")
     data_dir = webapp_dir / "src" / "data"
     detail_dir = data_dir / "processes"
     dest_seq = webapp_dir / "public" / "diagrams" / "sequence"
     dest_bpmn = webapp_dir / "public" / "diagrams" / "bpmn"
+    # Loaded before the wipe below, so a record that refuses to export leaves the previous
+    # export standing rather than half-deleted.
+    loaded, unresolved_refs = load_resolved(output_dir, ref_links_file)
+    if fv is not None:
+        for resolved in loaded:
+            record_fv = (resolved.process.get("process") or {}).get("formatversion")
+            if record_fv and record_fv != fv:
+                raise ValueError(f"process {resolved.pid!r} is Formatversion {record_fv!r}, not the exported {fv!r}")
     # These dirs are 100% generated; wipe them so re-runs don't keep orphans.
     for gen_dir in (detail_dir, dest_seq, dest_bpmn):
         if gen_dir.exists():
@@ -488,8 +497,6 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     # looks like another process's {pid}_{slug}), so record it rather than absorb it.
     claimed_ads: dict[str, str] = {}
     contested_ads: list[str] = []
-
-    loaded, unresolved_refs = load_resolved(output_dir, ref_links_file)
 
     index = []
     for entry in loaded:

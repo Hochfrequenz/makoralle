@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from makoralle.config import AHB_PID_URL, ahb_pid_url
+from makoralle.config import AHB_PID_URL, ahb_pid_url, require_formatversion
 
 
 def test_without_a_formatversion_the_link_targets_current() -> None:
@@ -34,8 +34,15 @@ def test_an_empty_formatversion_means_unbundled() -> None:
     assert ahb_pid_url(1, "") == "https://ahb-tabellen.hochfrequenz.de/ahb/current/1"
 
 
-@pytest.mark.parametrize("formatversion", ["fv2604", "FV 2604", "FV26", "FV2604\n"])
+@pytest.mark.parametrize("formatversion", ["fv2604", "FV 2604", "FV26", "FV2604\n", "FV２６０４"])
 def test_a_malformed_formatversion_raises(formatversion: str) -> None:
     """Falling back to `current` here would link the newest FV's tables from inside a bundle."""
     with pytest.raises(ValueError, match=re.escape(repr(formatversion))):
         ahb_pid_url(55001, formatversion)
+
+
+def test_require_formatversion_returns_a_valid_value_and_rejects_an_empty_one() -> None:
+    """Unlike ``ahb_pid_url``, the guard itself has no notion of "unbundled": ``""`` is not a Formatversion."""
+    assert require_formatversion("FV2604") == "FV2604"
+    with pytest.raises(ValueError, match="''"):
+        require_formatversion("")
