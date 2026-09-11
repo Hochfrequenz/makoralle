@@ -61,12 +61,18 @@ def build_answer_codes_index(ebd_dir: Path) -> dict[str, dict[str, dict[str, Any
 
     Returns:
         {ebd_id: {code: {"kind": str, "cluster": str | None,
-                         "hint": str | None, "steps": list[int]}}}
+                         "hint": str | None, "steps": list[int],
+                         "sunsets": dict[int, str]}}}
 
     The same code may appear at multiple steps within one EBD (observed in
     ~23 places in the real corpus). All occurrences merge into a single
     entry; `steps` lists every step number, and `cluster`/`kind`/`hint`
     come from the richest occurrence (preferring non-None cluster).
+    `sunsets` maps each step whose branch retires the code to its sunset (an ISO local
+    date-time or "offen"), in step order. It is keyed by step because a document need not
+    retire a code at every step that answers with it, and a single value for the entry would
+    have to guess. Two branches of one step carrying the same code are not told apart. The
+    key is absent from an entry that no step retires.
     Empty entries (EBDs with no code-bearing branches) are omitted.
     """
     index: dict[str, dict[str, dict[str, Any]]] = {}
@@ -100,8 +106,12 @@ def build_answer_codes_index(ebd_dir: Path) -> dict[str, dict[str, dict[str, Any
                         existing["cluster"] = cluster
                         existing["kind"] = cluster_to_kind(cluster)
                         existing["hint"] = hint
+                if sunset := step.get(f"{branch}_sunset"):
+                    codes[code].setdefault("sunsets", {})[step_nr] = sunset
         for entry in codes.values():
             entry["steps"].sort()
+            if "sunsets" in entry:
+                entry["sunsets"] = dict(sorted(entry["sunsets"].items()))
         if codes:
             index[ebd_id] = codes
     for path in sorted(_iter_codeliste_json_files(ebd_dir)):
@@ -177,13 +187,13 @@ def write_per_codeliste_yaml(ebd_dir: Path) -> list[Path]:
 
 
 def write_per_ebd_summary(ebd_dir: Path) -> list[Path]:
-    """Write `<ebd_dir>/summary/E_xxxx.md` — code | kind | cluster | step | hint."""
+    """Write `<ebd_dir>/summary/E_xxxx.md` — code | kind | cluster | step | hint | sunset."""
     out_dir = ebd_dir / "summary"
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for path in _iter_ebd_json_files(ebd_dir):
         ebd = _load_ebd(path)
-        rows: list[tuple[str, str, str, int, str]] = []
+        rows: list[tuple[str, str, str, int, str, str]] = []
         for step in ebd.get("steps", []):
             for branch in ("if_yes", "if_no"):
                 code = step.get(f"{branch}_code")
@@ -197,6 +207,7 @@ def write_per_ebd_summary(ebd_dir: Path) -> list[Path]:
                         cluster or "",
                         step["nr"],
                         (hint or "").replace("|", "\\|").replace("\n", " "),
+                        step.get(f"{branch}_sunset") or "",
                     )
                 )
         rows.sort(key=lambda r: r[0])
@@ -206,11 +217,11 @@ def write_per_ebd_summary(ebd_dir: Path) -> list[Path]:
             f"Role: {ebd.get('role') or 'unknown'}",
             f"Source: {ebd.get('source', '')}",
             "",
-            "| Code | Kind | Cluster | Step | Hint |",
-            "|------|------|---------|------|------|",
+            "| Code | Kind | Cluster | Step | Hint | Sunset |",
+            "|------|------|---------|------|------|--------|",
         ]
-        for code, kind, cluster, step_nr, hint in rows:
-            lines.append(f"| {code} | {kind} | {cluster} | {step_nr} | {hint} |")
+        for code, kind, cluster, step_nr, hint, sunset in rows:
+            lines.append(f"| {code} | {kind} | {cluster} | {step_nr} | {hint} | {sunset} |")
         out_path = out_dir / f"{ebd['id']}.md"
         out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         written.append(out_path)
