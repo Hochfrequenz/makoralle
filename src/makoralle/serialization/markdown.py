@@ -215,16 +215,28 @@ def _steps_branch(step: dict[str, Any], branch: str, mark: str) -> list[str]:
     target = step.get(branch)
     if target and isinstance(target, int):
         hint = f" {_escape_mermaid(step[f'{branch}_hint'])}" if step.get(f"{branch}_hint") else ""
-        return [f"        - {mark} \u2192 Step {target}{hint}"]
+        return [_with_sunset(f"        - {mark} \u2192 Step {target}{hint}", step, branch)]
     code = step.get(f"{branch}_code")
     hint = _escape_mermaid(step.get(f"{branch}_hint", ""))
     result = step.get(f"{branch}_result", "")
     if code:
-        return [f"        - {mark} \u2192 {code} {hint}" if hint else f"        - {mark} \u2192 {code} {result}"]
+        line = f"        - {mark} \u2192 {code} {hint}" if hint else f"        - {mark} \u2192 {code} {result}"
+        return [_with_sunset(line, step, branch)]
     if result and result.strip():
         leaf = f"        - {mark} \u2192 {result.strip()}"
-        return [f"{leaf} {hint}" if hint else leaf]
+        return [_with_sunset(f"{leaf} {hint}" if hint else leaf, step, branch)]
     return []
+
+
+def _with_sunset(line: str, step: dict[str, Any], branch: str) -> str:
+    """``line``, ended by the branch's sunset in the document's own words when it has one.
+
+    The parser takes "Nutzungsm\u00f6glichkeit Ende: \u2026" out of the Hinweis into ``*_sunset`` (an ISO
+    local date-time or ``offen``), so the step list says it again here or loses it (#76). A
+    line without a sunset is returned untouched, trailing space and all.
+    """
+    sunset = step.get(f"{branch}_sunset")
+    return f"{line.rstrip()} (Nutzungsm\u00f6glichkeit Ende: {sunset})" if sunset else line
 
 
 def _render_ebd_stub(dt: dict[str, Any]) -> list[str]:
