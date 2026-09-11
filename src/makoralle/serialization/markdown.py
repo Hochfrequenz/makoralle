@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from makoralle.config import AHB_PID_URL
+from makoralle.config import ahb_pid_url
 from makoralle.ebd_clusters import cluster_to_kind, extract_cluster
 from makoralle.models.process import REF_PREFIX, DeadlineRule, is_known_actor, is_ref_step
 from makoralle.notation import deadline_tag
@@ -262,14 +262,14 @@ def _render_ebd_stub(dt: dict[str, Any]) -> list[str]:
     return [line]
 
 
-def _pid_table(sd: dict[str, Any]) -> list[str]:
-    """Per-step Prüfidentifikatoren, each linked to its AHB table page."""
+def _pid_table(sd: dict[str, Any], formatversion: str | None = None) -> list[str]:
+    """Per-step Prüfidentifikatoren, each linked to its AHB table page (pinned to ``formatversion`` when set)."""
     rows = []
     for s in sd.get("steps", []):
         pids = s.get("pid_refs") or []
         if not pids:
             continue
-        links = ", ".join(f"[{p}]({AHB_PID_URL.format(pid=p)})" for p in pids)
+        links = ", ".join(f"[{p}]({ahb_pid_url(p, formatversion)})" for p in pids)
         msg = (s.get("message") or "").replace("|", r"\|")
         rows.append(f"| {s.get('nr')} | {msg} | {s.get('format') or ''} | {links} |")
     if not rows:
@@ -622,7 +622,7 @@ def yaml_to_markdown(  # pylint: disable=too-many-locals,too-many-branches,too-m
             lines.extend(_render_sequence_diagram(sd))  # Mermaid fallback
             lines.append("")
         lines.extend(_deadline_legend(sd))
-        lines.extend(_pid_table(sd))  # per-step Prüfidentifikatoren → AHB links
+        lines.extend(_pid_table(sd, proc.get("formatversion")))  # per-step Prüfidentifikatoren → AHB links
         lines.extend(_render_sd_table(sd))
         lines.append("")
 

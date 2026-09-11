@@ -1,5 +1,6 @@
 import re
 
+import pytest
 import yaml
 
 from makoralle.notation import tag_matrix
@@ -96,6 +97,46 @@ def test_pid_table_links_each_pid_to_ahb() -> None:
     assert "[19116](https://ahb-tabellen.hochfrequenz.de/ahb/current/19116)" in md
     assert "[19117](https://ahb-tabellen.hochfrequenz.de/ahb/current/19117)" in md
     assert "Prüfidentifikator" in md  # table present
+
+
+@pytest.mark.parametrize(
+    ("formatversion", "segment"),
+    [
+        pytest.param("FV2604", "/ahb/FV2604/", id="bundled-pins-its-fv"),
+        pytest.param(None, "/ahb/current/", id="unbundled-targets-current"),
+    ],
+)
+def test_pid_table_pins_the_bundles_formatversion(formatversion: str | None, segment: str) -> None:
+    """A bundled process links its own FV's AHB tables; an unbundled one keeps `current`.
+
+    The Formatversion sits under ``process:``, the shape ``process_to_yaml`` writes, and only when set.
+    """
+    process: dict[str, str] = {"id": "demo", "name": "Demo", "category": "GPKE"}
+    if formatversion:
+        process["formatversion"] = formatversion
+    content = yaml.safe_dump(
+        {
+            "process": process,
+            "sequence_diagram": {
+                "participants": ["LF", "NB"],
+                "steps": [
+                    {
+                        "nr": 1,
+                        "sender": "LF",
+                        "receiver": "NB",
+                        "message": "Sperrauftrag",
+                        "format": "ORDERS",
+                        "pid_refs": [17115, 17116],
+                    },
+                ],
+            },
+        },
+        allow_unicode=True,
+    )
+    md = yaml_to_markdown(content, has_sequence=True)
+    assert f"[17115](https://ahb-tabellen.hochfrequenz.de{segment}17115)" in md
+    assert f"[17116](https://ahb-tabellen.hochfrequenz.de{segment}17116)" in md
+    assert len(re.findall(r"https://ahb-tabellen\.hochfrequenz\.de/ahb/", md)) == 2  # no link escapes the pin
 
 
 def test_deadline_legend_emitted_only_when_tags_present() -> None:
