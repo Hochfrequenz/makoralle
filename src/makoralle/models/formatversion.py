@@ -9,6 +9,7 @@ which day each one is in force. The dates are curated, not derived from the name
 """
 
 import datetime
+import itertools
 import json
 from pathlib import Path
 from typing import Annotated, Self
@@ -56,19 +57,19 @@ class Formatversionen(BaseModel):
         if len(set(names)) != len(names):
             raise ValueError("a Formatversion is listed twice")
         dates = [b.gueltig_ab for b in self.bundles]
-        if dates != sorted(dates):
-            raise ValueError("bundles must be sorted by gueltig_ab")
+        if any(a >= b for a, b in itertools.pairwise(dates)):
+            raise ValueError("bundles must be sorted by gueltig_ab, no two on the same day")
         # Also rejects an empty table, which would leave in_force nothing to return.
         if self.default not in names:
             raise ValueError(f"default {self.default!r} is not one of the bundles {names}")
         return self
 
-    def in_force(self, on: IsoDate | None = None) -> Formatversion:
+    def in_force(self, on: datetime.date | None = None) -> Formatversion:
         """The newest bundle whose ``gueltig_ab`` is on or before ``on`` (today when omitted).
 
         Before the first ``gueltig_ab`` there is nothing older to show, so the oldest bundle is it.
         """
-        day = on or datetime.date.today().isoformat()
+        day = (on or datetime.date.today()).isoformat()
         current = self.bundles[0].fv
         for entry in self.bundles:
             if entry.gueltig_ab <= day:
@@ -87,7 +88,7 @@ def load_bundle(path: Path) -> Bundle:
 
 
 def write_json(model: BaseModel, dest: Path) -> None:
-    """Write the model as JSON with unset fields left out: the twin the stdlib-only app build reads."""
+    """Write the model as JSON with None fields left out: the twin the stdlib-only app build reads."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     payload = model.model_dump(mode="json", exclude_none=True)
-    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", "utf-8")
+    dest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", "utf-8", newline="\n")

@@ -1,5 +1,7 @@
 """Formatversionen are bundles: which edition of each document an FV holds, and from when."""
 
+import datetime
+import json
 from pathlib import Path
 
 import pytest
@@ -67,7 +69,7 @@ def test_in_force_is_the_newest_bundle_whose_gueltig_ab_has_passed(on: str, expe
             ],
         }
     )
-    assert table.in_force(on) == expected
+    assert table.in_force(datetime.date.fromisoformat(on)) == expected
 
 
 def test_the_default_must_be_one_of_the_bundles() -> None:
@@ -89,6 +91,16 @@ def test_bundles_are_sorted_and_unique() -> None:
                 "bundles": [
                     {"fv": "FV2604", "gueltig_ab": "2026-04-01"},
                     {"fv": "FV2510", "gueltig_ab": "2025-10-01"},
+                ],
+            }
+        )
+    with pytest.raises(ValidationError, match="sorted"):
+        Formatversionen.model_validate(
+            {
+                "default": "FV2510",
+                "bundles": [
+                    {"fv": "FV2510", "gueltig_ab": "2025-10-01"},
+                    {"fv": "FV2604", "gueltig_ab": "2025-10-01"},
                 ],
             }
         )
@@ -122,7 +134,25 @@ def test_write_json_is_the_yaml_as_the_app_reads_it(tmp_path: Path) -> None:
     """The app's build script is stdlib-only, so the JSON twin is what it consumes."""
     (tmp_path / "bundle.yaml").write_text(BUNDLE, "utf-8")
     dest = tmp_path / "bundle.json"
-    write_json(load_bundle(tmp_path / "bundle.yaml"), dest)
+    bundle = load_bundle(tmp_path / "bundle.yaml")
+    write_json(bundle, dest)
     text = dest.read_text("utf-8")
     assert '"fv": "FV2604"' in text and text.endswith("\n")
-    assert '"sha256"' not in text  # unset fields stay out, the app treats absence as unknown
+    assert '"sha256"' not in text  # None fields stay out, the app treats absence as unknown
+    assert b"\r\n" not in dest.read_bytes()  # byte-stable wherever it is written
+    assert Bundle.model_validate(json.loads(text)) == bundle
+
+
+def test_write_json_keeps_umlauts_and_typographic_quotes(tmp_path: Path) -> None:
+    """The ``quelle`` is German prose; it reaches the JSON twin as written and reads back unchanged."""
+    quelle = "„BDEW-Mitteilung“ zur Übergangsregelung – gültig für Änderungen ‚ab sofort‘"
+    (tmp_path / "formatversionen.yaml").write_text(
+        f"default: FV2604\nbundles:\n  - fv: FV2604\n    gueltig_ab: \"2026-04-01\"\n    quelle: '{quelle}'\n", "utf-8"
+    )
+    table = load_formatversionen(tmp_path / "formatversionen.yaml")
+    assert table.bundles[0].quelle == quelle
+    dest = tmp_path / "formatversionen.json"
+    write_json(table, dest)
+    text = dest.read_text("utf-8")
+    assert quelle in text  # not \u-escaped
+    assert Formatversionen.model_validate(json.loads(text)) == table
