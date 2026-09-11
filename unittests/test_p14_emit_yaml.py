@@ -15,6 +15,7 @@ from makoralle.models.process import (
     SourceDocuments,
     UseCase,
 )
+from makoralle.models.source import SourceDocument
 from makoralle.serialization.process_yaml import (
     emit_yaml,
     flatten_process_dict,
@@ -116,7 +117,7 @@ def test_process_from_yaml_round_trips() -> None:
             ],
         ),
         related_processes=[CrossReference(id="kuendigung", relation="folgt_auf")],
-        source_documents=SourceDocuments(uc_sd="GPKE Teil 2, Kapitel 2.1"),
+        source_documents=SourceDocuments(uc_sd=SourceDocument(file_name="Anlage1b_GPKE_Teil2.pdf")),
     )
     restored = process_from_yaml(process_to_yaml(proc))
     assert restored == proc
@@ -207,3 +208,31 @@ def test_process_from_dict_rejects_unknown_field() -> None:
 def test_flatten_process_dict_wrapper_key_wins_on_collision() -> None:
     flat = flatten_process_dict({"id": "top-level", "process": {"id": "wrapper"}})
     assert flat["id"] == "wrapper"
+
+
+def test_formatversion_and_source_editions_round_trip() -> None:
+    proc = Process(
+        id="lieferbeginn",
+        name="Lieferbeginn",
+        source="2.1 UC: Lieferbeginn",
+        category="GPKE",
+        formatversion="FV2604",
+        source_documents=SourceDocuments(
+            uc_sd=SourceDocument(file_name="Anlage1b_GPKE_Teil2.pdf"),
+            ebd=SourceDocument(file_name="EBD_4.2.pdf", document_version="4.2", date="2026-06-23"),
+        ),
+    )
+    text = process_to_yaml(proc)
+    parsed = yaml.safe_load(text)
+    assert parsed["process"]["formatversion"] == "FV2604"
+    assert parsed["cross_references"]["source_documents"]["ebd"]["document_version"] == "4.2"
+    assert "pid" not in parsed["cross_references"]["source_documents"]  # exclude_none, as before
+    back = process_from_yaml(text)
+    assert back.formatversion == "FV2604"
+    assert back.source_documents is not None and back.source_documents.uc_sd is not None
+    assert back.source_documents.uc_sd.file_name == "Anlage1b_GPKE_Teil2.pdf"
+
+
+def test_a_process_without_a_bundle_emits_no_formatversion_key() -> None:
+    proc = Process(id="x", name="X", source="", category="")
+    assert "formatversion" not in yaml.safe_load(process_to_yaml(proc))["process"]

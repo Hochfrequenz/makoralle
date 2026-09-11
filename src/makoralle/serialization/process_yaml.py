@@ -27,6 +27,8 @@ def process_to_yaml(process: Process) -> str:
         "source": process.source,
         "category": process.category,
     }
+    if process.formatversion:
+        data["process"]["formatversion"] = process.formatversion
     if process.use_case:
         data["use_case"] = process.use_case.model_dump(exclude_none=True)
     if process.sequence_diagram:
@@ -65,9 +67,9 @@ def emit_yaml(process: Process, output_dir: Path) -> Path:
 def flatten_process_dict(data: Mapping[str, Any]) -> dict[str, Any]:
     """Undo the on-disk nesting :func:`process_to_yaml` adds for readability.
 
-    It nests ``id``/``name``/``source``/``category`` under a ``process`` key and
-    ``related_processes``/``source_documents`` under ``cross_references``; :class:`Process`
-    itself declares all of those as top-level fields. Splices both wrappers back up,
+    It nests ``id``/``name``/``source``/``category`` (and ``formatversion``, when set) under a
+    ``process`` key and ``related_processes``/``source_documents`` under ``cross_references``;
+    :class:`Process` itself declares all of those as top-level fields. Splices both wrappers back up,
     tolerating a bare (``key:`` with no value, i.e. ``None``) or absent wrapper. A key
     present both at top level and inside a wrapper resolves to the wrapper's value.
     """
