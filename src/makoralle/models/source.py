@@ -1,9 +1,9 @@
-"""Where a record was read from: the published document, by file and date."""
+"""Where a record was read from: one edition of a published document (file, date, version, validity window, bytes)."""
 
 import datetime
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BaseModel, BeforeValidator, StringConstraints
+from pydantic import BaseModel, BeforeValidator, StringConstraints, model_validator
 
 
 def _date_to_iso(value: object) -> object:
@@ -40,3 +40,12 @@ class SourceDocument(BaseModel):
     valid_from: IsoDate | None = None
     valid_to: IsoDate | None = None
     sha256: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def _validity_window_is_ordered(self) -> Self:
+        # edi-energy names read <name>_<version>_<valid_from>_<valid_to>_…; a swapped pair while parsing one
+        # should fail loudly here, not end up as a window that never applies. ISO dates compare correctly as
+        # strings, and an open end (9999-12-31) is simply the latest.
+        if self.valid_from is not None and self.valid_to is not None and self.valid_from > self.valid_to:
+            raise ValueError(f"valid_from {self.valid_from} is later than valid_to {self.valid_to}")
+        return self
