@@ -564,6 +564,46 @@ def test_run_per_sd_full_approval_marks_index_approved(tmp_path: pathlib.Path) -
     assert index[pid]["approved"] is True  # fully approved
 
 
+def test_run_per_sd_full_approval_attaches_under_a_formatversion(tmp_path: pathlib.Path) -> None:
+    """The approval lookup recovers the artifact key from the ``svg`` URL, which ``fv`` prefixes.
+
+    The dataset's approvals file is empty, so real data cannot catch a lookup that breaks on
+    ``/diagrams/<FV>/sequence/...``; this does.
+    """
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    pid = "wechsel"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    _write(out / "sequence_svg" / f"{pid}__lieferant.svg", "<svg>lf</svg>")
+    _write(out / "sequence_svg" / f"{pid}__netzbetreiber.svg", "<svg>nb</svg>")
+    approvals = {
+        "approvals": {
+            f"{pid}__lieferant": {
+                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__lieferant") or ""),
+                "approved_by": "Joscha <j@x>",
+                "approved_at": "2026-06-30",
+            },
+            f"{pid}__netzbetreiber": {
+                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__netzbetreiber") or ""),
+                "approved_by": "Joscha <j@x>",
+                "approved_at": "2026-06-30",
+            },
+        }
+    }
+    af = tmp_path / "sd_approvals.yaml"
+    af.write_text(yaml.safe_dump(approvals, allow_unicode=True), "utf-8")
+
+    run(output_dir=out, webapp_dir=web, approvals_file=af, fv="FV2604")
+
+    detail = json.loads((web / f"src/data/processes/{pid}.json").read_text("utf-8"))
+    assert all(d["svg"].startswith("/diagrams/FV2604/sequence/") for d in detail["diagrams"])
+    expected = {"by": "Joscha <j@x>", "at": "2026-06-30", "note": ""}
+    assert all(d["approval"] == expected for d in detail["diagrams"])
+    assert detail["approval"] == expected  # mirrors the primary
+    index = {e["id"]: e for e in json.loads((web / "src/data/processes.json").read_text("utf-8"))}
+    assert index[pid]["approved"] is True  # fully approved
+
+
 def test_run_counts_stale_on_hash_mismatch_with_steps(tmp_path: pathlib.Path, capsys: Any) -> None:
     # An approval entry whose diagram exists but no longer hashes to the stamped
     # value: the diagram's approval is null AND the entry is counted stale. (The
@@ -1151,7 +1191,7 @@ def test_run_without_a_formatversion_keeps_the_unscoped_urls(tmp_path: pathlib.P
     assert detail["diagrams"][0]["svg"] == "/diagrams/sequence/abstimmung_der_netzzeitreihe.svg"
 
 
-@pytest.mark.parametrize("bad", ["fv2604", "FV26", "2604"])
+@pytest.mark.parametrize("bad", ["fv2604", "FV26", "2604", ""])
 def test_run_rejects_a_malformed_formatversion_before_writing_anything(tmp_path: pathlib.Path, bad: str) -> None:
     """A guessed value would ship URLs such as ``/diagrams/fv2604/...`` that 404 in the app."""
     out = tmp_path / "output"
