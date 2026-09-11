@@ -61,7 +61,7 @@ class Codeliste(BaseModel):
 
     @property
     def format_version(self) -> str | None:
-        """Deprecated spelling of :attr:`document_version`; removed in 0.0.24."""
+        """Deprecated spelling of :attr:`document_version`; scheduled for removal in 0.0.24."""
         warnings.warn("Codeliste.format_version is now document_version", DeprecationWarning, stacklevel=2)
         return self.document_version
 

@@ -76,18 +76,19 @@ invent what it never held — a condition, a second alternative, or an offset in
 ### Formatversionen
 
 A *Formatversion* (`FV2604`) is BDEW's half-yearly release, and it is a bundle rather than a
-document. A `Bundle` (in `models.formatversion`) names, for every document key the parser knows,
-the edition that applies; it lives at `<dataset>/<FV>/bundle.yaml`. `Formatversionen` is the
-table of bundles in `<dataset>/formatversionen.yaml`: each row has a `gueltig_ab` (curated, not
-derived from the name), and the table names a `default`. `in_force` returns the name of the
-newest bundle in force on a given day, or of the oldest one before the first `gueltig_ab`.
-`write_json` writes a model as JSON with None fields left out, for the stdlib-only web app build.
+document. A `Bundle` (in `models.formatversion`) names, for each document key (`gpke_teil1`,
+`ebd`, …), the edition that applies. `Formatversionen` is the table of bundles: each row has a
+`gueltig_ab` (curated, not derived from the name), and the table names a `default`. `in_force`
+returns the name of the newest bundle in force on a given day, or of the oldest one before the
+first `gueltig_ab`. `write_json` writes a model as JSON with None fields left out. A dataset is a
+directory laid out as `formatversionen.yaml` plus one `<FV>/bundle.yaml` per Formatversion; the
+loaders accept any path.
 
 ```python
 from pathlib import Path
 from makoralle.models.formatversion import load_bundle, load_formatversionen
 
-dataset = Path("machine-readable_mako-prozesse")    # a checkout of the dataset
+dataset = Path("dataset")                           # formatversionen.yaml + <FV>/bundle.yaml
 table = load_formatversionen(dataset / "formatversionen.yaml")
 fv = table.in_force()                               # today; pass a datetime.date for another day
 bundle = load_bundle(dataset / fv / "bundle.yaml")
@@ -95,27 +96,25 @@ edition = bundle.documents["ebd"]                   # a SourceDocument
 ```
 
 An edition is a `SourceDocument` (in `models.source`). It has a `file_name` and, optionally, the
-publication `date`, the `document_version`, a `valid_from`/`valid_to` window (which must be
-ordered) and the file's `sha256`. `Process.source_documents` (`uc_sd`, `ebd`, `pid`, `ad`) now holds
-editions instead of free text. `Process`, `DecisionTree` and `Codeliste` carry an optional
-`formatversion`, which is set when the record was built inside a bundle. The YAML emitter writes it
-only when it is set.
+publication `date`, the `document_version`, a `valid_from`/`valid_to` window and the file's
+`sha256`. Since 0.0.23, `Process.source_documents` (`uc_sd`, `ebd`, `pid`, `ad`) holds editions
+instead of free text, and `Process`, `DecisionTree` and `Codeliste` carry an optional
+`formatversion`, set when the record was built inside a bundle.
 
-On `DecisionTree` and `Codeliste`, `format_version` is now `document_version`, because the field
-always held the document's version (`"4.1"`) and never a Formatversion. For this release only (it
-is removed in 0.0.24) the old key still validates as input, and a read-only `format_version`
-property returns the value with a `DeprecationWarning`. That alias only works at runtime. A type
-checker without the pydantic mypy plugin rejects `DecisionTree(format_version=...)` as an
-unexpected keyword, and mypy then suggests `formatversion`, which is a different field. Switch to
-`document_version` now. A `document_version` that disagrees with its
+**Breaking in 0.0.23:** on `DecisionTree` and `Codeliste`, `format_version` is renamed to
+`document_version`, because the field always held the document's version (`"4.1"`) and never a
+Formatversion. The old key still validates as input, and a read-only `format_version` property
+returns the value with a `DeprecationWarning`; both are scheduled for removal in 0.0.24. Once they
+are gone, a stored record that still says `format_version` loads with `document_version = None`
+and no error, because the models ignore unknown keys, so re-save stored YAML/JSON with
+`document_version` now. The alias also only works at runtime: a type checker without the pydantic
+mypy plugin rejects `DecisionTree(format_version=...)` as an unexpected keyword, and mypy then
+suggests `formatversion`, which is a different field. A `document_version` that disagrees with its
 `source_document.document_version` is rejected.
 
-`config.ahb_pid_url(pid, formatversion)` pins an AHB link to `…/ahb/<FV>/<pid>` inside a bundle and
-uses `…/ahb/current/<pid>` otherwise; the Markdown serializer passes the process's
-`formatversion`. `webapp_export.run(..., fv="FV2604")` scopes diagram URLs to `/diagrams/<FV>/…`
-and stamps `formatversion` on the index and detail records. The files are written where they
-always were, and without `fv` the output is unchanged. Both raise `ValueError` for a value that
-is not `FV` plus four digits (`ahb_pid_url` treats an empty one as unbundled).
+`config.ahb_pid_url(pid, formatversion)` pins AHB links to `…/ahb/<FV>/<pid>`, and
+`webapp_export.run(..., fv=…)` scopes diagram URLs to `/diagrams/<FV>/…`. Both reject a non-empty
+value that is not `FV` plus four digits.
 
 ## Development
 
