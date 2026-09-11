@@ -79,9 +79,9 @@ A *Formatversion* (`FV2604`) is BDEW's half-yearly release, and it is a bundle r
 document. A `Bundle` (in `models.formatversion`) names, for every document key the parser knows,
 the edition that applies; it lives at `<dataset>/<FV>/bundle.yaml`. `Formatversionen` is the
 table of bundles in `<dataset>/formatversionen.yaml`: each row has a `gueltig_ab` (curated, not
-derived from the name), and the table names a `default`. `in_force` returns the newest bundle in
-force on a given day, or the oldest one before the first `gueltig_ab`. `write_json` writes a model
-as JSON with None fields left out, for the stdlib-only web app build.
+derived from the name), and the table names a `default`. `in_force` returns the name of the
+newest bundle in force on a given day, or of the oldest one before the first `gueltig_ab`.
+`write_json` writes a model as JSON with None fields left out, for the stdlib-only web app build.
 
 ```python
 from pathlib import Path
@@ -103,10 +103,10 @@ only when it is set.
 
 On `DecisionTree` and `Codeliste`, `format_version` is now `document_version`, because the field
 always held the document's version (`"4.1"`) and never a Formatversion. For this release only (it
-goes in 0.0.24) the old key still validates as input, and a read-only `format_version` property
-returns the value with a `DeprecationWarning`. That alias only works at runtime. A type checker
-without the pydantic mypy plugin rejects `DecisionTree(format_version=...)` as an unexpected
-keyword, and mypy then suggests `formatversion`, which is a different field. Switch to
+is removed in 0.0.24) the old key still validates as input, and a read-only `format_version`
+property returns the value with a `DeprecationWarning`. That alias only works at runtime. A type
+checker without the pydantic mypy plugin rejects `DecisionTree(format_version=...)` as an
+unexpected keyword, and mypy then suggests `formatversion`, which is a different field. Switch to
 `document_version` now. A `document_version` that disagrees with its
 `source_document.document_version` is rejected.
 
@@ -114,8 +114,8 @@ keyword, and mypy then suggests `formatversion`, which is a different field. Swi
 uses `…/ahb/current/<pid>` otherwise; the Markdown serializer passes the process's
 `formatversion`. `webapp_export.run(..., fv="FV2604")` scopes diagram URLs to `/diagrams/<FV>/…`
 and stamps `formatversion` on the index and detail records. The files are written where they
-always were, and without `fv` the output is unchanged. Both raise `ValueError` for anything that
-is not `FV` plus four digits.
+always were, and without `fv` the output is unchanged. Both raise `ValueError` for a value that
+is not `FV` plus four digits (`ahb_pid_url` treats an empty one as unbundled).
 
 ## Development
 
