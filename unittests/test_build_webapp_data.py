@@ -3,6 +3,7 @@ import json
 import pathlib
 from typing import Any
 
+import pytest
 import yaml
 
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
@@ -563,6 +564,46 @@ def test_run_per_sd_full_approval_marks_index_approved(tmp_path: pathlib.Path) -
     assert index[pid]["approved"] is True  # fully approved
 
 
+def test_run_per_sd_full_approval_attaches_under_a_formatversion(tmp_path: pathlib.Path) -> None:
+    """The approval lookup recovers the artifact key from the ``svg`` URL, which ``fv`` prefixes.
+
+    The dataset's approvals file is empty, so real data cannot catch a lookup that breaks on
+    ``/diagrams/<FV>/sequence/...``; this does.
+    """
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    pid = "wechsel"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    _write(out / "sequence_svg" / f"{pid}__lieferant.svg", "<svg>lf</svg>")
+    _write(out / "sequence_svg" / f"{pid}__netzbetreiber.svg", "<svg>nb</svg>")
+    approvals = {
+        "approvals": {
+            f"{pid}__lieferant": {
+                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__lieferant") or ""),
+                "approved_by": "Joscha <j@x>",
+                "approved_at": "2026-06-30",
+            },
+            f"{pid}__netzbetreiber": {
+                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__netzbetreiber") or ""),
+                "approved_by": "Joscha <j@x>",
+                "approved_at": "2026-06-30",
+            },
+        }
+    }
+    af = tmp_path / "sd_approvals.yaml"
+    af.write_text(yaml.safe_dump(approvals, allow_unicode=True), "utf-8")
+
+    run(output_dir=out, webapp_dir=web, approvals_file=af, fv="FV2604")
+
+    detail = json.loads((web / f"src/data/processes/{pid}.json").read_text("utf-8"))
+    assert all(d["svg"].startswith("/diagrams/FV2604/sequence/") for d in detail["diagrams"])
+    expected = {"by": "Joscha <j@x>", "at": "2026-06-30", "note": ""}
+    assert all(d["approval"] == expected for d in detail["diagrams"])
+    assert detail["approval"] == expected  # mirrors the primary
+    index = {e["id"]: e for e in json.loads((web / "src/data/processes.json").read_text("utf-8"))}
+    assert index[pid]["approved"] is True  # fully approved
+
+
 def test_run_counts_stale_on_hash_mismatch_with_steps(tmp_path: pathlib.Path, capsys: Any) -> None:
     # An approval entry whose diagram exists but no longer hashes to the stamped
     # value: the diagram's approval is null AND the entry is counted stale. (The
@@ -1115,3 +1156,87 @@ def test_diagram_source_text_is_none_for_an_unknown_key(tmp_path: pathlib.Path) 
     _write(out / "yaml" / "wechsel.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
     assert diagram_source_text(out, "wechsel__geloescht") is None
     assert diagram_source_text(out, "wechsel__lieferant") is not None
+
+
+def test_run_with_a_formatversion_scopes_urls_and_stamps_the_records(tmp_path: pathlib.Path) -> None:
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    _write(out / "sequence_svg" / "abstimmung_der_netzzeitreihe.svg", "<svg/>")
+    _write(out / "bpmn" / "abstimmung_der_netzzeitreihe.svg", "<svg/>")
+
+    run(output_dir=out, webapp_dir=web, fv="FV2604")
+
+    index = json.loads((web / "src" / "data" / "processes.json").read_text("utf-8"))
+    assert index[0]["formatversion"] == "FV2604"
+    detail = json.loads((web / "src" / "data" / "processes" / "abstimmung_der_netzzeitreihe.json").read_text("utf-8"))
+    assert detail["formatversion"] == "FV2604"
+    assert detail["diagrams"][0]["svg"] == "/diagrams/FV2604/sequence/abstimmung_der_netzzeitreihe.svg"
+    assert detail["diagrams"][0]["activitySvg"] == "/diagrams/FV2604/bpmn/abstimmung_der_netzzeitreihe.svg"
+    ads = json.loads((web / "src" / "data" / "activity_diagrams.json").read_text("utf-8"))
+    assert ads[0]["svg"] == "/diagrams/FV2604/bpmn/abstimmung_der_netzzeitreihe.svg"
+    # the files themselves stay where they were: the app puts them under /<FV>/ when it copies
+    assert (web / "public" / "diagrams" / "sequence" / "abstimmung_der_netzzeitreihe.svg").exists()
+
+
+def test_run_without_a_formatversion_keeps_the_unscoped_urls(tmp_path: pathlib.Path) -> None:
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    run(output_dir=out, webapp_dir=web)
+    index = json.loads((web / "src" / "data" / "processes.json").read_text("utf-8"))
+    assert "formatversion" not in index[0]
+    detail = json.loads((web / "src" / "data" / "processes" / "abstimmung_der_netzzeitreihe.json").read_text("utf-8"))
+    assert "formatversion" not in detail
+    assert detail["diagrams"][0]["svg"] == "/diagrams/sequence/abstimmung_der_netzzeitreihe.svg"
+
+
+@pytest.mark.parametrize("bad", ["fv2604", "FV26", "2604", "", "FV２６０４"])
+def test_run_rejects_a_malformed_formatversion_before_writing_anything(tmp_path: pathlib.Path, bad: str) -> None:
+    """A guessed value would ship URLs such as ``/diagrams/fv2604/...`` that 404 in the app."""
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    with pytest.raises(ValueError, match=repr(bad)):
+        run(output_dir=out, webapp_dir=web, fv=bad)
+    assert not web.exists()
+
+
+def test_the_builders_stamp_the_formatversion_when_called_directly() -> None:
+    entry = build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True, fv="FV2604")
+    assert entry["formatversion"] == "FV2604"
+    detail = build_detail(SAMPLE, review_notes=[], fv="FV2604")
+    assert detail["formatversion"] == "FV2604"
+    assert detail["diagrams"][0]["svg"] == "/diagrams/FV2604/sequence/abstimmung_der_netzzeitreihe.svg"
+    assert "formatversion" not in build_index_entry(SAMPLE, has_bpmn=False, has_review=False, has_sequence=True)
+    assert "formatversion" not in build_detail(SAMPLE, review_notes=[])
+
+
+def test_run_refuses_a_record_of_another_formatversion_before_writing_anything(tmp_path: pathlib.Path) -> None:
+    """A miswired per-bundle loop (FV2510 records exported as FV2604) must not stamp the wrong version."""
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    record = copy.deepcopy(SAMPLE)
+    record["process"]["formatversion"] = "FV2510"
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(record, allow_unicode=True))
+    with pytest.raises(ValueError, match="abstimmung_der_netzzeitreihe") as raised:
+        run(output_dir=out, webapp_dir=web, fv="FV2604")
+    assert "'FV2510'" in str(raised.value)
+    assert "'FV2604'" in str(raised.value)
+    assert not web.exists()
+
+
+@pytest.mark.parametrize("record_fv", [None, "FV2604"])
+def test_run_exports_a_record_that_carries_no_or_the_same_formatversion(
+    tmp_path: pathlib.Path, record_fv: str | None
+) -> None:
+    """``None``: an unregenerated corpus whose records predate the field still exports under ``fv``."""
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    record = copy.deepcopy(SAMPLE)
+    if record_fv:
+        record["process"]["formatversion"] = record_fv
+    _write(out / "yaml" / "abstimmung_der_netzzeitreihe.yaml", yaml.safe_dump(record, allow_unicode=True))
+    assert run(output_dir=out, webapp_dir=web, fv="FV2604") == 1
+    index = json.loads((web / "src" / "data" / "processes.json").read_text("utf-8"))
+    assert index[0]["formatversion"] == "FV2604"

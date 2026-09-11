@@ -7,6 +7,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
 
+from makoralle.models.formatversion import Formatversion
+from makoralle.models.source import SourceDocument
+
 
 class DeadlineRule(BaseModel):
     """Structured deadline derived from free-text Frist."""
@@ -178,12 +181,18 @@ class CrossReference(BaseModel):
 
 
 class SourceDocuments(BaseModel):
-    """References to the source documents a process was derived from."""
+    """The editions a process was derived from, one per kind of input.
 
-    uc_sd: str | None = None
-    ebd: str | None = None
-    pid: str | None = None
-    ad: str | None = None
+    ``uc_sd`` is the process document the use case and its sequence diagrams were cut from,
+    ``ebd``/``pid``/``ad`` the corpus documents whose records were linked in. Typed as editions
+    since 0.0.23; the field was free text before and never populated (absent from every committed
+    process YAML, null only in pipeline intermediates), so no reader loses anything.
+    """
+
+    uc_sd: SourceDocument | None = None
+    ebd: SourceDocument | None = None
+    pid: SourceDocument | None = None
+    ad: SourceDocument | None = None
 
 
 class Process(BaseModel):
@@ -193,6 +202,8 @@ class Process(BaseModel):
     name: str
     source: str
     category: str
+    # The BDEW Formatversion this process was bundled for. None outside a bundle run.
+    formatversion: Formatversion | None = None
     use_case: UseCase | None = None
     sequence_diagram: SequenceDiagram | None = None
     diagrams: list[NamedSD] = []

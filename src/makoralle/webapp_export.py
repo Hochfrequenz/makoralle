@@ -16,10 +16,20 @@ from typing import Any, NamedTuple
 
 import yaml
 
+from makoralle.config import require_formatversion
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.ref_links import build_ref_map, load_ref_overrides, resolve_ref
 from makoralle.review import ReviewItem, is_actionable, review_items
 from makoralle.serialization.makrake import canonical_json, makrake_diagram
+
+
+def _diagram_url_prefix(fv: str | None) -> str:
+    """Where the app serves this bundle's SVGs: ``/diagrams/`` unscoped, ``/diagrams/<FV>/`` inside a bundle.
+
+    The files are written to the same place either way; the app's build script namespaces the
+    copy per Formatversion, and these URLs are what it will resolve against.
+    """
+    return f"/diagrams/{fv}/" if fv else "/diagrams/"
 
 
 def sd_source_hash(source_text: str) -> str:
@@ -73,7 +83,13 @@ def _ordered_union(lists: Iterable[list[Any] | None]) -> list[Any]:
 
 
 def build_index_entry(
-    process: dict[str, Any], *, has_bpmn: bool, has_review: bool, has_sequence: bool, approved: bool = False
+    process: dict[str, Any],
+    *,
+    has_bpmn: bool,
+    has_review: bool,
+    has_sequence: bool,
+    approved: bool = False,
+    fv: str | None = None,
 ) -> dict[str, Any]:
     """Build the compact list-view entry (one row of ``processes.json``) for a process."""
     p = process.get("process") or {}
@@ -97,7 +113,7 @@ def build_index_entry(
     variants = _pid_name_variants(process.get("pid_mappings") or [])
     all_pid_names = sorted({name for pid in all_pids for name in variants.get(pid, ())})
     participants = _ordered_union(d.get("participants") or [] for d in diagrams)
-    return {
+    entry: dict[str, Any] = {
         "id": p.get("id") or "",
         "name": p.get("name") or "",
         "category": p.get("category") or "",
@@ -114,6 +130,9 @@ def build_index_entry(
         "approved": approved,
         "source": p.get("source") or "",
     }
+    if fv:
+        entry["formatversion"] = fv
+    return entry
 
 
 def _deadline_table(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -231,7 +250,7 @@ def _distinct_pids(steps: list[dict[str, Any]]) -> list[int]:
 
 
 def build_detail(
-    process: dict[str, Any], *, review_notes: list[str], review: list[ReviewItem] | None = None
+    process: dict[str, Any], *, review_notes: list[str], review: list[ReviewItem] | None = None, fv: str | None = None
 ) -> dict[str, Any]:
     """Build the full per-process detail record (``processes/<id>.json``).
 
@@ -261,7 +280,7 @@ def build_detail(
                 "steps": d_steps,
                 "deadlines": _deadline_table(d_steps),
                 "pids": _pid_table(d_steps, pid_names),
-                "svg": f"/diagrams/sequence/{key}.svg",
+                "svg": f"{_diagram_url_prefix(fv)}sequence/{key}.svg",
                 # Attached by run(), which can see which artifact actually exists;
                 # build_detail has no filesystem, so it emits None rather than a
                 # path that may 404 (same contract as `approval` below).
@@ -273,7 +292,7 @@ def build_detail(
     # Task 3.4 will drop these once the webapp reads diagrams[] exclusively.
     primary_steps = diagrams[0]["steps"] if diagrams else []
     primary_participants = diagrams[0]["participants"] if diagrams else []
-    return {
+    detail: dict[str, Any] = {
         "id": pid,
         "name": p.get("name") or "",
         "category": p.get("category") or "",
@@ -293,6 +312,9 @@ def build_detail(
         # is stable for callers/tests that build a detail without the filesystem.
         "approval": None,
     }
+    if fv:
+        detail["formatversion"] = fv
+    return detail
 
 
 def load_approvals(approvals_file: Path | None) -> dict[str, Any]:
@@ -422,19 +444,42 @@ def export_makrake_inputs(*, output_dir: Path, dest: Path, ref_links_file: Path 
 
 
 def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    *, output_dir: Path, webapp_dir: Path, approvals_file: Path | None = None, ref_links_file: Path | None = None
+    *,
+    output_dir: Path,
+    webapp_dir: Path,
+    approvals_file: Path | None = None,
+    ref_links_file: Path | None = None,
+    fv: str | None = None,
 ) -> int:
     """Build the webapp data (index + per-process JSON) and copy diagram SVGs.
 
     Reads parsed YAML/rendered artifacts from ``output_dir`` and writes the SPA's
     ``src/data`` JSON plus ``public/diagrams`` SVGs into ``webapp_dir``. Returns the
     number of processes written.
+
+    ``fv`` is the Formatversion this ``output_dir`` was built for; it scopes every URL the
+    app resolves (``/diagrams/<FV>/...``) and stamps ``formatversion`` on index and detail
+    records. ``None`` exports an unbundled corpus exactly as before. A value that is not
+    ``FV`` + four digits (``""`` included) raises :class:`ValueError` before anything is
+    written: the caller would otherwise ship URLs the app 404s on. So does a process record
+    whose own ``formatversion`` names a different one — a miswired per-bundle loop must not
+    stamp the wrong Formatversion; a record carrying none (an unregenerated corpus) exports.
     """
+    if fv is not None:
+        require_formatversion(fv)
     seq_svg, bpmn_svg = (output_dir / "sequence_svg", output_dir / "bpmn")
     data_dir = webapp_dir / "src" / "data"
     detail_dir = data_dir / "processes"
     dest_seq = webapp_dir / "public" / "diagrams" / "sequence"
     dest_bpmn = webapp_dir / "public" / "diagrams" / "bpmn"
+    # Loaded before the wipe below, so a record that refuses to export leaves the previous
+    # export standing rather than half-deleted.
+    loaded, unresolved_refs = load_resolved(output_dir, ref_links_file)
+    if fv is not None:
+        for resolved in loaded:
+            record_fv = (resolved.process.get("process") or {}).get("formatversion")
+            if record_fv and record_fv != fv:
+                raise ValueError(f"process {resolved.pid!r} is Formatversion {record_fv!r}, not the exported {fv!r}")
     # These dirs are 100% generated; wipe them so re-runs don't keep orphans.
     for gen_dir in (detail_dir, dest_seq, dest_bpmn):
         if gen_dir.exists():
@@ -452,8 +497,6 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     # looks like another process's {pid}_{slug}), so record it rather than absorb it.
     claimed_ads: dict[str, str] = {}
     contested_ads: list[str] = []
-
-    loaded, unresolved_refs = load_resolved(output_dir, ref_links_file)
 
     index = []
     for entry in loaded:
@@ -486,7 +529,7 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
         for item in review:
             if item.text not in review_notes:
                 review_notes.append(item.text)
-        detail = build_detail(process, review_notes=review_notes, review=review)
+        detail = build_detail(process, review_notes=review_notes, review=review, fv=fv)
         # Per-SD: attach each diagram's approval and copy its .svg into the webapp. The
         # artifact key is the svg path's stem (one source of truth with build_detail).
         #
@@ -512,7 +555,7 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
         # Point each diagram at the activity artifact that actually exists (None
         # when this variant has none), so the app never links a 404.
         for diagram, resolved_ad in zip(detail["diagrams"], ad_for_slug, strict=True):
-            diagram["activitySvg"] = f"/diagrams/bpmn/{resolved_ad}.svg" if resolved_ad else None
+            diagram["activitySvg"] = f"{_diagram_url_prefix(fv)}bpmn/{resolved_ad}.svg" if resolved_ad else None
         # detail.approval = the PRIMARY diagram's approval (back-compat; single-SD
         # key == pid so this equals the old {pid}.wsd result).
         detail["approval"] = detail["diagrams"][0]["approval"] if detail["diagrams"] else None
@@ -533,6 +576,7 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
                 has_review=is_actionable(review),
                 has_sequence=has_seq,
                 approved=fully_approved,
+                fv=fv,
             )
         )
         (detail_dir / f"{pid}.json").write_text(json.dumps(detail, ensure_ascii=False, indent=2), "utf-8")
@@ -550,7 +594,7 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     unclaimed = [k for k in all_ads if k not in claimed_ads]
     (data_dir / "activity_diagrams.json").write_text(
         json.dumps(
-            [{"name": k, "svg": f"/diagrams/bpmn/{k}.svg", "linked": k in claimed_ads} for k in all_ads],
+            [{"name": k, "svg": f"{_diagram_url_prefix(fv)}bpmn/{k}.svg", "linked": k in claimed_ads} for k in all_ads],
             ensure_ascii=False,
             indent=2,
         ),
