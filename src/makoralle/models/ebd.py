@@ -13,7 +13,7 @@ resolves to a statement instead of to nothing.
 import warnings
 from typing import Annotated, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import AliasChoices, BaseModel, Field, StringConstraints, model_validator
 
 from makoralle.models.formatversion import Formatversion
 from makoralle.models.source import SourceDocument
@@ -147,8 +147,6 @@ class DecisionTree(BaseModel):
     from, so a tree can be told apart from the same id in the next Lesefassung. Where both
     ``document_version`` and ``source_document.document_version`` are set they must agree.
     """
-
-    model_config = ConfigDict(populate_by_name=True)
 
     id: str
     name: str

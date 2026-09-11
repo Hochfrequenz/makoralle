@@ -10,7 +10,7 @@ Ablehnungsgründe of a step.
 import warnings
 from typing import Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from makoralle.models.formatversion import Formatversion
 from makoralle.models.source import SourceDocument
@@ -42,8 +42,6 @@ class Codeliste(BaseModel):
     from, as on :class:`~makoralle.models.ebd.DecisionTree`; ``document_version`` must agree with
     ``source_document.document_version`` where both are set.
     """
-
-    model_config = ConfigDict(populate_by_name=True)
 
     id: str
     name: str
