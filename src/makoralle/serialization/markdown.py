@@ -233,7 +233,9 @@ def _with_sunset(line: str, step: dict[str, Any], branch: str) -> str:
 
     The parser takes "Nutzungsm\u00f6glichkeit Ende: \u2026" out of the Hinweis into ``*_sunset`` (an ISO
     local date-time or ``offen``), so the step list says it again here or loses it (#76). A
-    line without a sunset is returned untouched, trailing space and all.
+    line without a sunset is returned untouched, trailing space and all. A branch with no
+    outcome draws no line at all (see :func:`_steps_branch`), so a sunset on one is not shown;
+    EBD 4.1 has no such branch.
     """
     sunset = step.get(f"{branch}_sunset")
     return f"{line.rstrip()} (Nutzungsm\u00f6glichkeit Ende: {sunset})" if sunset else line

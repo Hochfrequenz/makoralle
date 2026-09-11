@@ -17,6 +17,7 @@ from makoralle.serialization.ebd_yaml import build_answer_codes_index, write_ans
 from makoralle.serialization.markdown import _render_ebd_steps, yaml_to_markdown
 
 RETIRED = "2026-04-01T00:00"
+BRANCHES = ["if_yes", "if_no"]
 
 
 def _write_tree(directory: Path, *steps: dict[str, Any]) -> None:
@@ -24,17 +25,24 @@ def _write_tree(directory: Path, *steps: dict[str, Any]) -> None:
     (directory / "E_0608.json").write_text(json.dumps(tree, ensure_ascii=False), encoding="utf-8")
 
 
-def _coded(nr: int, sunset: str | None = None) -> dict[str, Any]:
-    step: dict[str, Any] = {"nr": nr, "check": "x", "if_yes_code": "A99", "if_yes_hint": "Cluster: Ablehnung Sonstiges"}
+def _coded(nr: int, sunset: str | None = None, branch: str = "if_yes") -> dict[str, Any]:
+    step: dict[str, Any] = {
+        "nr": nr,
+        "check": "x",
+        f"{branch}_code": "A99",
+        f"{branch}_hint": "Cluster: Ablehnung Sonstiges",
+    }
     if sunset is not None:
-        step["if_yes_sunset"] = sunset
+        step[f"{branch}_sunset"] = sunset
     return step
 
 
 # --- answer_codes.yaml ---------------------------------------------------------------------------
-def test_an_entry_names_the_steps_that_retire_its_code(tmp_path: Path) -> None:
-    """After E_0608 A99 in dataset v0.0.31: retired at step 130, not at step 610 -- one entry, and it says where."""
-    _write_tree(tmp_path, _coded(130, RETIRED), _coded(610))
+@pytest.mark.parametrize("branch", BRANCHES)
+def test_an_entry_names_the_steps_that_retire_its_code(tmp_path: Path, branch: str) -> None:
+    """Constructed: retired at step 130, not at step 610. None of EBD 4.1's multi-step entries disagree
+    like this, but a document may, and the index must say where rather than guess."""
+    _write_tree(tmp_path, _coded(130, RETIRED, branch), _coded(610, branch=branch))
     entry = build_answer_codes_index(tmp_path)["E_0608"]["A99"]
     assert (entry["steps"], entry["sunsets"]) == ([130, 610], {130: RETIRED})
 
@@ -42,6 +50,12 @@ def test_an_entry_names_the_steps_that_retire_its_code(tmp_path: Path) -> None:
 def test_every_retiring_step_of_an_entry_is_listed(tmp_path: Path) -> None:
     _write_tree(tmp_path, _coded(130, RETIRED), _coded(610, "offen"))
     assert build_answer_codes_index(tmp_path)["E_0608"]["A99"]["sunsets"] == {130: RETIRED, 610: "offen"}
+
+
+def test_the_sunsets_are_in_step_order_like_the_steps(tmp_path: Path) -> None:
+    _write_tree(tmp_path, _coded(610, "offen"), _coded(130, RETIRED))
+    entry = build_answer_codes_index(tmp_path)["E_0608"]["A99"]
+    assert (entry["steps"], list(entry["sunsets"])) == ([130, 610], [130, 610])
 
 
 @pytest.mark.parametrize("sunset", [RETIRED, "offen"])
@@ -81,9 +95,10 @@ def test_the_summary_has_a_sunset_column(tmp_path: Path) -> None:
     assert "|------|------|---------|------|------|--------|" in lines
 
 
+@pytest.mark.parametrize("branch", BRANCHES)
 @pytest.mark.parametrize(("sunset", "cell"), [(RETIRED, f"| {RETIRED} |"), ("offen", "| offen |"), (None, "|  |")])
-def test_a_summary_row_ends_with_its_sunset(tmp_path: Path, sunset: str | None, cell: str) -> None:
-    (row,) = [line for line in _summary(tmp_path, _coded(2, sunset)) if line.startswith("| A99 ")]
+def test_a_summary_row_ends_with_its_sunset(tmp_path: Path, sunset: str | None, cell: str, branch: str) -> None:
+    (row,) = [line for line in _summary(tmp_path, _coded(2, sunset, branch)) if line.startswith("| A99 ")]
     assert row == f"| A99 | rejection | Ablehnung | 2 | Sonstiges {cell}"
 
 

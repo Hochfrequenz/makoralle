@@ -69,9 +69,10 @@ def build_answer_codes_index(ebd_dir: Path) -> dict[str, dict[str, dict[str, Any
     entry; `steps` lists every step number, and `cluster`/`kind`/`hint`
     come from the richest occurrence (preferring non-None cluster).
     `sunsets` maps each step whose branch retires the code to its sunset (an ISO local
-    date-time or "offen"). It is keyed by step because the steps of one entry need not agree
-    (E_0608 A99 in dataset v0.0.31: retired at step 130, not at 610), and it is absent from an
-    entry that no step retires.
+    date-time or "offen"), in step order. It is keyed by step because a document need not
+    retire a code at every step that answers with it, and a single value for the entry would
+    have to guess. Two branches of one step carrying the same code are not told apart. The
+    key is absent from an entry that no step retires.
     Empty entries (EBDs with no code-bearing branches) are omitted.
     """
     index: dict[str, dict[str, dict[str, Any]]] = {}
@@ -109,6 +110,8 @@ def build_answer_codes_index(ebd_dir: Path) -> dict[str, dict[str, dict[str, Any
                     codes[code].setdefault("sunsets", {})[step_nr] = sunset
         for entry in codes.values():
             entry["steps"].sort()
+            if "sunsets" in entry:
+                entry["sunsets"] = dict(sorted(entry["sunsets"].items()))
         if codes:
             index[ebd_id] = codes
     for path in sorted(_iter_codeliste_json_files(ebd_dir)):
