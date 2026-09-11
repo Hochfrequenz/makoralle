@@ -10,10 +10,12 @@ with ``steps == []`` and a ``kind`` saying which of those it is, so a process's 
 resolves to a statement instead of to nothing.
 """
 
+import warnings
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, StringConstraints, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from makoralle.models.formatversion import Formatversion
 from makoralle.models.source import SourceDocument
 
 TreeKind = Literal[
@@ -140,9 +142,13 @@ class DecisionTree(BaseModel):
     ``use_other_ebd`` stub pointing nowhere is not a statement; both are enforced. ``note`` is not
     restricted.
 
-    ``format_version`` is the document's version (``"4.1"``) and ``source_document`` the file it was
-    read from, so a tree can be told apart from the same id in the next Lesefassung.
+    ``document_version`` is the document's version (``"4.1"``), ``formatversion`` the BDEW
+    Formatversion it was bundled for (``"FV2604"``), and ``source_document`` the file it was read
+    from, so a tree can be told apart from the same id in the next Lesefassung. Where both
+    ``document_version`` and ``source_document.document_version`` are set they must agree.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     id: str
     name: str
@@ -152,9 +158,33 @@ class DecisionTree(BaseModel):
     codelisten: list[str] | None = None
     use_ebd: str | None = None
     note: str | None = None
-    format_version: str | None = None
+    # The document's own version ("4.1"). Was `format_version` until 0.0.23 -- kept as an input
+    # alias for one release because every committed record spells it that way.
+    document_version: str | None = Field(
+        default=None, validation_alias=AliasChoices("document_version", "format_version")
+    )
+    # The BDEW Formatversion the bundle was built for ("FV2604"). None for records parsed
+    # outside a bundle (a bare `makorele run-docs` with no bundle.yaml).
+    formatversion: Formatversion | None = None
     source_document: SourceDocument | None = None
     steps: list[DecisionStep] = []
+
+    @property
+    def format_version(self) -> str | None:
+        """Deprecated spelling of :attr:`document_version`; removed in 0.0.24."""
+        warnings.warn("DecisionTree.format_version is now document_version", DeprecationWarning, stacklevel=2)
+        return self.document_version
+
+    @model_validator(mode="after")
+    def _versions_agree(self) -> Self:
+        # The edition carries its version since 0.0.23; the record repeats it, so nothing else keeps the two in step.
+        edition = self.source_document.document_version if self.source_document is not None else None
+        if self.document_version is not None and edition is not None and self.document_version != edition:
+            raise ValueError(
+                f"{self.id}: document_version {self.document_version!r} disagrees with "
+                f"source_document.document_version {edition!r}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _a_stub_is_a_statement(self) -> Self:

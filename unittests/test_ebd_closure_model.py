@@ -33,7 +33,7 @@ def test_a_v0_0_29_tree_still_loads_as_a_tree() -> None:
     tree = DecisionTree.model_validate({"id": "E_0622", "name": "Prüfen", "steps": [{"nr": 10, "check": "x"}]})
     assert tree.kind == "tree"
     assert tree.codelisten is None and tree.use_ebd is None and tree.note is None
-    assert tree.format_version is None and tree.source_document is None
+    assert tree.document_version is None and tree.source_document is None
 
 
 def test_an_unconditional_row_carries_next_and_no_branch() -> None:
@@ -80,7 +80,7 @@ def test_a_codelist_only_stub_names_its_lists_and_has_no_steps() -> None:
         name="Anmeldung Messstellenbetrieb prüfen",
         kind="codelist_only",
         codelisten=["S_0055", "S_0056"],
-        format_version="4.1",
+        document_version="4.1",
         source_document=EBD_4_1,
     )
     assert stub.steps == []
@@ -141,17 +141,17 @@ def test_a_codeliste_carries_its_provenance() -> None:
     liste = Codeliste(
         id="S_0056",
         name="Ablehnung Anmeldung MSB",
-        format_version="4.1",
+        document_version="4.1",
         source_document=EBD_4_1,
         codes=[CodeEntry(code="E11", name="Ablehnung (Messproblem)")],
     )
-    assert liste.format_version == "4.1"
+    assert liste.document_version == "4.1"
     assert liste.source_document == EBD_4_1
 
 
 def test_a_v0_0_29_codeliste_still_loads() -> None:
     liste = Codeliste.model_validate({"id": "S_0056", "name": "x", "codes": []})
-    assert liste.format_version is None and liste.source_document is None
+    assert liste.document_version is None and liste.source_document is None
 
 
 def test_a_source_document_needs_its_file_name() -> None:
@@ -208,9 +208,9 @@ def test_a_sunset_the_parser_did_not_normalise_is_refused(branch: str, sunset: o
         (DecisionTree, {"id": "E_1", "name": "x", "kind": "use_other_ebd", "use_ebd": 539}),
         (DecisionTree, {"id": "E_1", "name": "x", "note": 1}),
         (DecisionTree, {"id": "E_1", "name": "x", "kind": "codelist_only", "codelisten": "S_0055"}),
-        (DecisionTree, {"id": "E_1", "name": "x", "format_version": 4.1}),
+        (DecisionTree, {"id": "E_1", "name": "x", "document_version": 4.1}),
         (DecisionTree, {"id": "E_1", "name": "x", "source_document": "EBD.pdf"}),
-        (Codeliste, {"id": "S_1", "name": "x", "codes": [], "format_version": 4.1}),
+        (Codeliste, {"id": "S_1", "name": "x", "codes": [], "document_version": 4.1}),
         (Codeliste, {"id": "S_1", "name": "x", "codes": [], "source_document": "EBD.pdf"}),
     ],
 )
