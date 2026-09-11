@@ -219,7 +219,14 @@ def test_formatversion_and_source_editions_round_trip() -> None:
         formatversion="FV2604",
         source_documents=SourceDocuments(
             uc_sd=SourceDocument(file_name="Anlage1b_GPKE_Teil2.pdf"),
-            ebd=SourceDocument(file_name="EBD_4.2.pdf", document_version="4.2", date="2026-06-23"),
+            ebd=SourceDocument(
+                file_name="EBD_4.2.pdf",
+                document_version="4.2",
+                date="2026-06-23",
+                valid_from="2026-10-01",
+                valid_to="9999-12-31",
+                sha256="0" * 64,
+            ),
         ),
     )
     text = process_to_yaml(proc)
@@ -231,6 +238,8 @@ def test_formatversion_and_source_editions_round_trip() -> None:
     assert back.formatversion == "FV2604"
     assert back.source_documents is not None and back.source_documents.uc_sd is not None
     assert back.source_documents.uc_sd.file_name == "Anlage1b_GPKE_Teil2.pdf"
+    assert back == proc  # model equality, as the dataset CI checks
+    assert process_to_yaml(back) == text  # byte stability
 
 
 def test_a_process_without_a_bundle_emits_no_formatversion_key() -> None:

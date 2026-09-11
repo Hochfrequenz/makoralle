@@ -185,8 +185,8 @@ class SourceDocuments(BaseModel):
 
     ``uc_sd`` is the process document the use case and its sequence diagrams were cut from,
     ``ebd``/``pid``/``ad`` the corpus documents whose records were linked in. Typed as editions
-    since 0.0.23; the field was free text before and never populated (null in every committed
-    file), so no reader loses anything.
+    since 0.0.23; the field was free text before and never populated (absent from every committed
+    process YAML, null only in pipeline intermediates), so no reader loses anything.
     """
 
     uc_sd: SourceDocument | None = None
