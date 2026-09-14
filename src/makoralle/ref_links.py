@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,7 @@ import yaml
 # (the Task-4.2 consumer) already imports p12_link, so reusing its normalizer here
 # adds no new dependency and keeps a single source of truth for normalization.
 from makoralle.grouping import _normalize_for_matching
+from makoralle.models.process import Process
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,63 @@ def resolve_ref(
     if key in overrides:
         return overrides[key]
     return ref_map.get(key)
+
+
+def ref_target_id(target: Mapping[str, Any] | Sequence[str] | None) -> str | None:
+    """A resolved target as one id: ``uc__sd``, or the bare ``uc`` for the default diagram.
+
+    The ``uc__sd`` spelling is makuna's template id and what makrake's ``{uc}`` / ``{sd}`` link
+    placeholders split back apart, so an empty ``sd`` keeps the bare id rather than gaining an
+    empty suffix. Accepts the ``{"uc", "sd"}`` mapping :func:`resolve_ref` returns or a
+    ``(uc, sd)`` pair. ``None`` when the target is ``None`` or names no ``uc``.
+
+    ``None`` is a real answer, not a failure: an unresolved reference gets no link, which is
+    honest. Guessing a target would send a reader to the wrong process.
+    """
+    if not target:
+        return None
+    if isinstance(target, Mapping):
+        uc, sd = target.get("uc") or "", target.get("sd") or ""
+    else:
+        uc, sd = [*list(target), "", ""][:2]
+    if not uc:
+        return None
+    return f"{uc}__{sd}" if sd else str(uc)
+
+
+def assign_subprocess_ref_ids(processes: Iterable[Process], overrides: dict[str, dict[str, Any]]) -> list[str]:
+    """Set ``subprocess_ref_id`` on every step of ``processes``; return the refs that did not resolve.
+
+    Resolution has to see the whole corpus at once, because a ``ref`` names another process's
+    diagram. Every step is (re)assigned, so an id a previous run wrote is cleared when its ref
+    no longer resolves. ``overrides`` is what :func:`load_ref_overrides` returns.
+
+    The primary ``sequence_diagram`` alias is walked as well as ``diagrams``: the YAML writes
+    both, and they must not disagree. The returned names are unique, in first-seen order.
+    """
+    procs = list(processes)
+    ref_map = build_ref_map(
+        {
+            "id": p.id,
+            "name": p.name,
+            "diagrams": [{"slug": d.slug, "name": d.name, "source_heading": d.source_heading} for d in p.diagrams]
+            or ([{"slug": "", "name": None}] if p.sequence_diagram else []),
+        }
+        for p in procs
+    )
+    unresolved: dict[str, None] = {}
+    for p in procs:
+        steps = [s for d in p.diagrams for s in d.steps]
+        if p.sequence_diagram is not None:
+            steps.extend(p.sequence_diagram.steps)
+        for step in steps:
+            if not step.subprocess_ref:
+                step.subprocess_ref_id = None
+                continue
+            step.subprocess_ref_id = ref_target_id(resolve_ref(step.subprocess_ref, ref_map, overrides))
+            if step.subprocess_ref_id is None:
+                unresolved[step.subprocess_ref] = None
+    return list(unresolved)
 
 
 def load_ref_overrides(path: Path | None) -> dict[str, dict[str, Any]]:

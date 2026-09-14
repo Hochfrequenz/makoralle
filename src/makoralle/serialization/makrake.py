@@ -33,6 +33,7 @@ from typing import Any
 
 from makoralle.models.deadline import deadline_from_rule
 from makoralle.models.process import REF_PREFIX, DeadlineRule
+from makoralle.ref_links import ref_target_id
 
 #: makrake's ``Step.kind``. A ``ref`` step is drawn as a folded-corner box spanning the
 #: lanes rather than as an arrow between two of them.
@@ -54,29 +55,6 @@ def _pids(step: dict[str, Any]) -> list[int]:
         except (TypeError, ValueError):
             continue
     return out
-
-
-def _subprocess_ref_id(step: dict[str, Any]) -> str | None:
-    """The referenced subprocess's template id, or ``None`` when it did not resolve.
-
-    Reads the ``ref_target`` that :func:`makoralle.webapp_export.run` already put on the
-    step — a ``(uc, sd)`` pair, or ``None``. The ``uc__sd`` spelling is makuna's template
-    id and what makrake's ``{uc}`` / ``{sd}`` link placeholders split back apart, so a
-    single-diagram target keeps its bare id rather than gaining an empty suffix.
-
-    ``None`` is a real answer, not a failure: an unresolved reference gets a box with no
-    link, which is honest. Guessing a target would send a reader to the wrong process.
-    """
-    target = step.get("ref_target")
-    if not target:
-        return None
-    if isinstance(target, dict):
-        uc, sd = target.get("uc") or "", target.get("sd") or ""
-    else:
-        uc, sd = [*list(target), "", ""][:2]
-    if not uc:
-        return None
-    return f"{uc}__{sd}" if sd else str(uc)
 
 
 def _prose(text: Any) -> str | None:
@@ -144,7 +122,8 @@ def _step(step: dict[str, Any]) -> dict[str, Any]:
         out["pids"] = pids
     if ref:
         out["subprocess_ref"] = ref
-        ref_id = _subprocess_ref_id(step)
+        # `ref_target` is what `webapp_export.load_resolved` put on the step.
+        ref_id = ref_target_id(step.get("ref_target"))
         if ref_id:
             out["subprocess_ref_id"] = ref_id
     if prose:

@@ -108,6 +108,9 @@ class SDStep(BaseModel):
     deadline_rule: DeadlineRule | None = None
     ebd_ref: str | None = None
     subprocess_ref: str | None = None  # name of referenced subprocess
+    # Where that name resolves, as ``ref_links.ref_target_id`` spells it: ``uc`` or ``uc__sd``.
+    # None on a message step and on a ref no curated override or exact name match resolves.
+    subprocess_ref_id: str | None = None
     pid_refs: list[int] = []  # linked Prüfidentifikatoren
     # UML message style. `line` is detected from the diagram (solid message /
     # dashed reply). `arrowhead` is derived structurally, not detected: open by
