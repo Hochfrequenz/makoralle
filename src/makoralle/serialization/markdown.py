@@ -17,11 +17,37 @@ logger = logging.getLogger(__name__)
 
 
 def _escape_mermaid(text: str) -> str:
-    """Escape special characters for Mermaid node labels."""
+    r"""Escape special characters for Mermaid node labels.
+
+    Quotes and newlines only. It deliberately does **not** rejoin hyphenated line breaks.
+
+    This used to carry ``re.sub(r"(\w)- (\w)", r"\1\2", text)``, meant for a PDF line break
+    ("verbrau- chende"). A regex cannot tell that from a German *Ergänzungsstrich*, so it shipped
+    "Arbeits- und Leistungswerte" as "Arbeitsund" (makoralle#50).
+
+    Every call site here is EBD text, and that text is the one kind ``makorele`` never
+    de-hyphenates: ``dehyphenate`` runs only on use-case fields (``p07_parse_uc``) and SD steps
+    (``p12_link``), while decision trees go straight from p09 JSON into ``DecisionTree(**data)``.
+    So this rule was the only de-hyphenation EBD text ever saw -- the case for removing it is
+    measured, not architectural:
+
+    * the p09 EBD source carries nothing to fix: 0 line-break hyphens (``\w-\n\w``) across the
+      18240 strings in dataset v0.0.36's ``FV2604/pipeline/09_ebds``, and all 37 ``\w- \w`` hits
+      are suspension hyphens;
+    * the rule only ever did damage: rendering all 196 FV2604 processes drove it 134 times over
+      7 distinct hyphen pairs (from 8 distinct source strings), 7 of 7 wrong, 0 true positives --
+      and the same 134 in FV2510 and FV2610;
+    * the narrower rule proposed in makoralle#50 (exempt connectives, keep a hyphen before a
+      capital) rewrites **0** occurrences on all three bundles, so it is deletion plus a rule that
+      can only mis-fire on unseen input.
+
+    ``makorele.pipeline.wrapped_text`` records, in the module comment above ``CONNECTIVES``, that
+    the last two attempts at deciding this with a regex -- the bare one above, and a lowercase-only
+    lookaround -- each shipped mangled German. ``makorele.pipeline.hyphenation`` resolves it
+    properly, against an adjudicated table of 916 breaks.
+    """
     text = text.replace('"', "'")
     text = text.replace("\n", " ")
-    # Remove PDF line-break hyphens like "verbrau- chende" -> "verbrauchende"
-    text = re.sub(r"(\w)- (\w)", r"\1\2", text)
     return text.strip()
 
 
