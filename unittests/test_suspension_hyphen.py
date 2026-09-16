@@ -2,9 +2,12 @@ r"""A suspension hyphen survives the markdown serializer (makoralle#50).
 
 ``_escape_mermaid`` used to carry ``re.sub(r"(\w)- (\w)", r"\1\2", text)`` for a PDF line break
 ("verbrau- chende"). A regex cannot tell that from a German *Ergänzungsstrich*, so it turned
-"Arbeits- und Leistungswerte" into "Arbeitsund" in the shipped dataset. De-hyphenation belongs to
-``makorele.pipeline.hyphenation``, which decides it against an adjudicated table; the serializer
-now leaves every hyphen alone.
+"Arbeits- und Leistungswerte" into "Arbeitsund" in the shipped dataset.
+
+Note that EBD text -- which is all this serializer escapes -- is *not* de-hyphenated upstream:
+``makorele``'s ``dehyphenate`` runs on use-case fields and SD steps only, so there is no upstream
+guarantee to lean on here. The serializer simply preserves what the source says, and the source
+was measured to contain no line-break hyphens to repair.
 
 These tests pin both directions: the suspension hyphen that must survive, and the genuine line
 break that is now *deliberately* left alone rather than silently glued shut.

@@ -278,8 +278,9 @@ def _render_ebd_stub(dt: dict[str, Any]) -> list[str]:
         return []
     line = f"**No decision tree** (`{kind}`)"
     if dt.get("note"):
-        # Verbatim, on one line: this is markdown text, not a mermaid label, and _escape_mermaid
-        # would glue "Strom- und Gas" shut (#50).
+        # Verbatim, on one line: this is markdown text, not a mermaid label, so it needs none of
+        # _escape_mermaid's quote swapping. (This bypass predates #50, when _escape_mermaid would
+        # also have glued "Strom- und Gas" shut; that rule is gone, but the bypass is still right.)
         line += f": {' '.join(dt['note'].split())}"
     if dt.get("use_ebd"):
         line += f" \u2192 {dt['use_ebd']}"
