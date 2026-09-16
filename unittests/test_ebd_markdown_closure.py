@@ -106,7 +106,7 @@ def test_every_other_stub_kind_is_named(kind: str) -> None:
 
 
 def test_a_stub_note_is_quoted_verbatim_on_one_line() -> None:
-    """Markdown text, not a mermaid label: no quote swapping, no suspension hyphen glued shut."""
+    """Markdown text, not a mermaid label: no quote swapping."""
     (line,) = _render_ebd_stub({"id": "E_0452", "kind": "unclassified", "note": 'Strom- und\nGas "neu"'})
     assert line == '**No decision tree** (`unclassified`): Strom- und Gas "neu"'
 

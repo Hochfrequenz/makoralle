@@ -17,11 +17,37 @@ logger = logging.getLogger(__name__)
 
 
 def _escape_mermaid(text: str) -> str:
-    """Escape special characters for Mermaid node labels."""
+    r"""Escape special characters for Mermaid node labels.
+
+    Quotes and newlines only. It deliberately does **not** rejoin hyphenated line breaks.
+
+    This used to carry ``re.sub(r"(\w)- (\w)", r"\1\2", text)``, meant for a PDF line break
+    ("verbrau- chende"). A regex cannot tell that from a German *Ergänzungsstrich*, so it shipped
+    "Arbeits- und Leistungswerte" as "Arbeitsund" (makoralle#50).
+
+    Every call site here is EBD text, and that text arrives already de-hyphenated: ``makorele``'s
+    ``p09_parse_ebd`` runs ``dehyphenate`` over every check and hint it flattens (``_flatten``,
+    makorele#203), so the decision trees p12 builds carry their line breaks already resolved
+    against an adjudicated table. Re-deciding that here can only degrade it -- and the
+    measurements agree:
+
+    * the p09 EBD source carries nothing this rule could fix: none of the 18240 strings in dataset
+      v0.0.36's ``FV2604/pipeline/09_ebds`` contains a newline, so the artifact can only ever appear
+      already flattened -- and all 37 ``\w- \w`` hits there are suspension hyphens;
+    * the rule only ever did damage: rendering all 196 FV2604 processes drove it 134 times over
+      7 distinct hyphen pairs (from 8 distinct source strings), 7 of 7 wrong, 0 true positives --
+      and the same 134 in FV2510 and FV2610;
+    * the narrower rule proposed in makoralle#50 (exempt connectives, keep a hyphen before a
+      capital) rewrites **0** occurrences on all three bundles, so it is deletion plus a rule that
+      can only mis-fire on unseen input.
+
+    ``makorele.pipeline.wrapped_text`` records, in the module comment above ``CONNECTIVES``, that
+    the last two attempts at deciding this with a regex -- the bare one above, and a lowercase-only
+    lookaround -- each shipped mangled German. ``makorele.pipeline.hyphenation`` resolves it
+    properly, against an adjudicated table of 916 breaks.
+    """
     text = text.replace('"', "'")
     text = text.replace("\n", " ")
-    # Remove PDF line-break hyphens like "verbrau- chende" -> "verbrauchende"
-    text = re.sub(r"(\w)- (\w)", r"\1\2", text)
     return text.strip()
 
 
@@ -252,8 +278,9 @@ def _render_ebd_stub(dt: dict[str, Any]) -> list[str]:
         return []
     line = f"**No decision tree** (`{kind}`)"
     if dt.get("note"):
-        # Verbatim, on one line: this is markdown text, not a mermaid label, and _escape_mermaid
-        # would glue "Strom- und Gas" shut (#50).
+        # Verbatim, on one line: this is markdown text, not a mermaid label, so it needs none of
+        # _escape_mermaid's quote swapping. (This bypass predates #50, when _escape_mermaid would
+        # also have glued "Strom- und Gas" shut; that rule is gone, but the bypass is still right.)
         line += f": {' '.join(dt['note'].split())}"
     if dt.get("use_ebd"):
         line += f" \u2192 {dt['use_ebd']}"
