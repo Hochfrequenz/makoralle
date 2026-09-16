@@ -31,9 +31,9 @@ def _escape_mermaid(text: str) -> str:
     So this rule was the only de-hyphenation EBD text ever saw -- the case for removing it is
     measured, not architectural:
 
-    * the p09 EBD source carries nothing to fix: 0 line-break hyphens (``\w-\n\w``) across the
-      18240 strings in dataset v0.0.36's ``FV2604/pipeline/09_ebds``, and all 37 ``\w- \w`` hits
-      are suspension hyphens;
+    * the p09 EBD source carries nothing this rule could fix: none of the 18240 strings in dataset
+      v0.0.36's ``FV2604/pipeline/09_ebds`` contains a newline, so the artifact can only ever appear
+      already flattened -- and all 37 ``\w- \w`` hits there are suspension hyphens;
     * the rule only ever did damage: rendering all 196 FV2604 processes drove it 134 times over
       7 distinct hyphen pairs (from 8 distinct source strings), 7 of 7 wrong, 0 true positives --
       and the same 134 in FV2510 and FV2610;
