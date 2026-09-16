@@ -4,10 +4,10 @@ r"""A suspension hyphen survives the markdown serializer (makoralle#50).
 ("verbrau- chende"). A regex cannot tell that from a German *Ergänzungsstrich*, so it turned
 "Arbeits- und Leistungswerte" into "Arbeitsund" in the shipped dataset.
 
-Note that EBD text -- which is all this serializer escapes -- is *not* de-hyphenated upstream:
-``makorele``'s ``dehyphenate`` runs on use-case fields and SD steps only, so there is no upstream
-guarantee to lean on here. The serializer simply preserves what the source says, and the source
-was measured to contain no line-break hyphens to repair.
+Note where the decision actually belongs: EBD check and hint text is de-hyphenated upstream, by
+``makorele``'s ``p09_parse_ebd`` (makorele#203), against an adjudicated table of 916 breaks. The
+serializer sees less context than that stage did, so it preserves what the source says -- and the
+source was measured to contain no line-break hyphens left to repair.
 
 These tests pin both directions: the suspension hyphen that must survive, and the genuine line
 break that is now *deliberately* left alone rather than silently glued shut.

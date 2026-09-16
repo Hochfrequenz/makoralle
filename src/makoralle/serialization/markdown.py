@@ -25,11 +25,11 @@ def _escape_mermaid(text: str) -> str:
     ("verbrau- chende"). A regex cannot tell that from a German *Ergänzungsstrich*, so it shipped
     "Arbeits- und Leistungswerte" as "Arbeitsund" (makoralle#50).
 
-    Every call site here is EBD text, and that text is the one kind ``makorele`` never
-    de-hyphenates: ``dehyphenate`` runs only on use-case fields (``p07_parse_uc``) and SD steps
-    (``p12_link``), while decision trees go straight from p09 JSON into ``DecisionTree(**data)``.
-    So this rule was the only de-hyphenation EBD text ever saw -- the case for removing it is
-    measured, not architectural:
+    Every call site here is EBD text, and that text arrives already de-hyphenated: ``makorele``'s
+    ``p09_parse_ebd`` runs ``dehyphenate`` over every check and hint it flattens (``_flatten``,
+    makorele#203), so the decision trees p12 builds carry their line breaks already resolved
+    against an adjudicated table. Re-deciding that here can only degrade it -- and the
+    measurements agree:
 
     * the p09 EBD source carries nothing this rule could fix: none of the 18240 strings in dataset
       v0.0.36's ``FV2604/pipeline/09_ebds`` contains a newline, so the artifact can only ever appear
