@@ -97,9 +97,12 @@ git push -u origin docs/67-pid-docstring-sparte-claim
 gh pr create --title "docs(models): refute the Sparte-derivation claim in PIDMapping.prozessbeschreibung_dokument" --body "<body below>"
 ```
 
-PR body (evidence-argued, house style; ends with the fix reference):
+PR body (evidence-argued, house style; ends with the fix reference; **first line notes
+it carries the series' design spec + plan docs**, per Task 0):
 
 ```markdown
+Carries the series' design spec + implementation plan (`docs/superpowers/{specs,plans}/`).
+
 `PIDMapping.prozessbeschreibung_dokument`'s docstring reported (PID 4.0 workbook) that
 this field is what the Sparte columns are computed from — hedged as unverifiable because
 the workbook arrives out-of-band. The claim is checkable from the data this toolchain
@@ -198,7 +201,7 @@ Expected: FAIL — the alias still populates `document_version` (`"4.1" is not N
 - [ ] **Step 2.4: Remove alias + property from `ebd.py`**
 
 - Line 13: delete `import warnings` (unused afterwards).
-- Line 16: drop `AliasChoices` from the pydantic import.
+- Line 16: drop `AliasChoices` **and `Field`** from the pydantic import (`Field` has no other use in this module — ruff F401 at the Step 2.8 gate otherwise).
 - Lines 159–163: replace the two comment lines + aliased field with:
 
 ```python
@@ -209,7 +212,7 @@ Expected: FAIL — the alias still populates `document_version` (`"4.1" is not N
 
 - [ ] **Step 2.5: Remove alias + property from `codeliste.py`**
 
-Same pattern: delete `import warnings` (line 10), drop `AliasChoices` from the import (line 13), replace lines 51–55 (comment + aliased field) with `document_version: str | None = None`, delete the property (lines 62–66).
+Same pattern: delete `import warnings` (line 10), drop `AliasChoices` **and `Field`** from the import (line 13 — `Field` unused afterwards), replace lines 51–55 (comment + aliased field) with `document_version: str | None = None`, delete the property (lines 62–66).
 
 - [ ] **Step 2.6: Green**
 
@@ -300,8 +303,11 @@ Fixes #81
 date that disagrees. All three spec guarantees hold: derived (absent → efoli), loud
 drift rejection (mismatch → `ValueError` naming efoli), and `model_dump()`/`write_json`
 still emit the date (it is a plain field, so the webapp twin and the JSON round-trip
-keep working untouched). `_consistent` and `in_force` are literally unchanged — the
-field remains an ISO string, so their string comparisons still type-check. Using efoli's
+keep working untouched). Because `gueltig_ab` becomes `IsoDate | None`, `_consistent`
+and `in_force` DO change at the type level: mypy `--strict` flags their `str`
+comparisons (4 `[operator]` errors), so both get an `is not None` narrowing guard with
+a comment stating the invariant (entry validation always leaves the field set) —
+runtime behaviour unchanged. Using efoli's
 `>=2.4.1` floor (not `==`) matches the repo's dependency style and lets "bump efoli"
 upgrade dates without editing makoralle.
 
@@ -363,19 +369,37 @@ def test_the_drift_check_runs_before_the_table_checks() -> None:
 
 
 def test_a_derived_table_dumps_and_round_trips() -> None:
-    table = Formatversionen(default="FV2604", bundles=[{"fv": "FV2604"}, {"fv": "FV2610"}])
+    # Constructed via model_validate like every existing test in this file: the pydantic
+    # mypy plugin is not enabled, so dict kwargs here would fail the unittests mypy gate.
+    table = Formatversionen.model_validate(
+        {"default": "FV2604", "bundles": [{"fv": "FV2604"}, {"fv": "FV2610"}]}
+    )
     dumped = table.model_dump(mode="json")
     assert dumped["bundles"][0]["gueltig_ab"] == "2026-04-01"
     assert Formatversionen.model_validate(dumped) == table
 ```
 
-And fix the pre-existing trip-wire the reviewer found: in `test_bundles_are_sorted_and_unique`, change the "twice" case's second date `"2025-10-02"` → `"2025-10-01"` (a wrong date now dies in the drift check before `_consistent` sees the duplicates; the case only needs a duplicate name, and an efoli-agreeing date lets it reach the right error).
+Two changes to the existing `test_bundles_are_sorted_and_unique`, both because the drift
+check now rejects disagreeing dates **before** `_consistent` runs:
+
+- the "twice" case's second date `"2025-10-02"` → `"2025-10-01"` (an efoli-agreeing
+  date lets the duplicate reach the "listed twice" error);
+- **delete** the second "sorted" sub-case (FV2510 and FV2604 both dated
+  `"2025-10-01"`): with efoli as source of truth two distinct FVs can never share a
+  day, so this scenario is unreachable without a disagreeing date, and a disagreeing
+  date now dies in the drift check. Its behaviour is covered by the new
+  `test_the_drift_check_runs_before_the_table_checks`. The **first** "sorted" sub-case
+  (FV2604 first, FV2510 second) keeps its efoli-agreeing dates and still reaches the
+  "sorted" error.
+
+When extending the import, ruff isort wants `FormatversionEntry` **before**
+`Formatversionen` (`--fix` handles it).
 
 ```bash
 PYTHONUTF8=1 uv run pytest unittests/test_formatversion_model.py -q
 ```
 
-Expected: the five new tests FAIL (`gueltig_ab` currently required / no efoli logic); the tweaked "twice" case still passes.
+Expected: all six new tests FAIL (`gueltig_ab` currently required / no efoli logic — the drift-ordering test raises the current "sorted" error, which lacks "efoli"); the tweaked "twice" case still passes.
 
 - [ ] **Step 3.4: Implement in `src/makoralle/models/formatversion.py`**
 
@@ -436,7 +460,20 @@ class FormatversionEntry(BaseModel):
 ```
 
 - `IsoDate` is already importable from `makoralle.models.source` (extend the existing import there).
-- `in_force`, `_consistent`, `load_*`, `write_json`: **no changes**.
+- `load_*`, `write_json`: **no changes**.
+- `_consistent` and `in_force`: one narrowing change each — with
+  `gueltig_ab: IsoDate | None`, mypy `--strict` rejects their `str` comparisons (4
+  `[operator]` errors). Runtime behaviour is unchanged because entry validation always
+  leaves the field set; the guards exist for the type checker:
+
+```python
+# _consistent, with a one-line comment stating the invariant (entry validation has
+# already normalised every gueltig_ab to efoli's date):
+dates = [b.gueltig_ab for b in self.bundles if b.gueltig_ab is not None]
+
+# in_force, inside the loop:
+if entry.gueltig_ab is not None and entry.gueltig_ab <= day:
+```
 - Ordering guarantee (pinning test 5): pydantic validates nested entries before the parent `model_validator(mode="after")` on `Formatversionen`, so a doubly-bad table raises the drift error first.
 
 ```bash
@@ -571,7 +608,7 @@ Fixes #36
 ```bash
 git checkout main && git pull origin main
 gh pr list --state open          # expect: empty
-gh log --oneline -8              # the four squash commits on top of the spec commit
+git log --oneline -8             # the four squash commits on top of the docs
 ```
 
 - [ ] **Step 5.2: Tag and create the GitHub release**
