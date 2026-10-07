@@ -135,7 +135,7 @@ Fixes #67
 
 - [ ] **Step 1.5: Review loop (applies to every PR in this plan)**
 
-1. **Copilot:** poll `gh pr view <n> --json reviews --jq '.reviews[] | "\(.author.login) \(.state)"'` until `copilot-pull-request-reviewer` appears. Read its findings (inline comments: `gh api repos/Hochfrequenz/makoralle/pulls/<n>/comments --jq '.[] | .path, .body, ---'`). Implement valid findings, push. Dismiss/argue invalid ones in a PR comment.
+1. **Copilot:** poll `gh pr view <n> --json reviews --jq '.reviews[] | "\(.author.login) \(.state)"'` until `copilot-pull-request-reviewer` appears. Read its findings (inline comments: `gh api repos/Hochfrequenz/makoralle/pulls/<n>/comments --jq '.[] | "[\(.path):\(.line // .original_line)] \(.body)"'`). Implement valid findings, push. Dismiss/argue invalid ones in a PR comment.
 2. **Opus:** dispatch a review subagent (model `opus`) with the PR number and instruction to review the full diff against this plan's PR section + the spec; implement valid findings, push.
 3. **Another round** by either reviewer **ONLY if necessary** (Iff — e.g. a finding reshaped substantial code or introduced a new defect surface); not by default.
 4. **CI:** poll `gh pr checks <n>` until every check passes (required: pytest 3.11–3.14, lint, type_check, coverage, packaging, spell_check, format). Never push to main directly; merge only `gh pr merge <n> --squash` after green.
@@ -581,9 +581,12 @@ PR body:
 invoking lane or an arrow to the named one, and required the emitters to agree or the
 docstring to stop claiming they do. Decision: **keep the split, on the record.**
 
-- `emit_wsd` keeps drawing the readable `"ref "` step as a self-message on the sender
+- `emit_wsd` keeps drawing the readable `"ref "` step (space-prefix form) as a
+  self-message on the sender
   (a ref is a subprocess box on one lifeline; Vision's extraction unanimously emits
-  single-lane self-messages for refs — five cache entries, two model versions).
+  single-lane self-messages for refs — five cache entries, two model versions). The
+  colon/dot forms (`"ref:"`, `"ref."`) keep their sender→receiver arrows in WSD too —
+  unifying them with the space form was explicitly decided against.
 - The Mermaid emitter keeps drawing `sender → receiver` plus the subprocess note when
   the ref title names the receiver explicitly (7 shipped arrows say *"vom BIKO an NB"*).
 - Where an endpoint was **not** read at all, both already agree via the #78 rule:
@@ -637,10 +640,10 @@ Expected: the run completes green.
 - [ ] **Step 5.4: Verify the publication**
 
 ```bash
-curl -s https://pypi.org/pypi/makoralle/json | grep -o '"version":"[^"]*"' | head -1
+curl -s https://pypi.org/pypi/makoralle/json | uv run python -c "import json,sys; print(json.load(sys.stdin)['info']['version'])"
 ```
 
-Expected: `"version":"0.1.0"`. If the publish job failed, read its logs (`gh run view <run-id> --log-failed`), fix on a new PR, re-release.
+Expected: `0.1.0` (parsed as JSON — not a whitespace-dependent grep). If the publish job failed, read its logs (`gh run view <run-id> --log-failed`), fix on a new PR, re-release.
 
 ---
 

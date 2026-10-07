@@ -51,7 +51,8 @@ and requested by the repo owner; proceed, and note the assignee in the PR.
 0.0.23 renamed `format_version` → `document_version` on `DecisionTree` and
 `Codeliste`, keeping an input alias (`AliasChoices`) and a warning read-only property
 "scheduled for removal in 0.0.24". 0.0.24 shipped without the removal; this is the
-tracked removal, released as **0.0.25** (tags confirm 0.0.24 exists), strictly alone
+tracked removal, released as **0.1.0** (the first release after 0.0.24; 0.0.x never
+carried it), strictly alone
 in its PR.
 
 The issue's own verification makes it safe: dataset v0.0.35 contains **0** files with
@@ -70,7 +71,7 @@ this field.
   warning to pinning the new contract — a record that still says `format_version`
   loads with `document_version = None` and no error (models ignore unknown keys).
 - `README.md` "Breaking in 0.0.23" paragraph (lines 104–113): rewrite as the removal
-  record — the alias and property are gone as of 0.0.25; re-save stored YAML/JSON
+  record — the alias and property are gone as of 0.1.0; re-save stored YAML/JSON
   that still spells the old key.
 
 Grep gates: no `format_version` left in `src/` afterwards; in `unittests/`, the
