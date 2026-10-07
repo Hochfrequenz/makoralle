@@ -19,24 +19,28 @@
 
 ## Task 0: One-time setup
 
-- [ ] **Step 0.1: Push the spec commit to main**
+**Rule: never push to main directly.** Main is protected (repo ruleset: required status checks, squash-only) and the user forbids it: every change — including specs/plans — reaches main through a PR with green CI.
 
-The approved spec was committed locally on main (`3e92558`). It must reach remote main before PR 1, or it would pollute PR 1's diff.
+- [ ] **Step 0.1: Carry the docs commits in PR 1**
+
+The approved spec (`3e92558`) and plan (`0eeceb8`) are local commits on main. **Do NOT push them to main.** They ride in PR 1's branch:
 
 ```bash
-git checkout main && git pull origin main && git push origin main
+git checkout docs/67-pid-docstring-sparte-claim   # after Step 1.1 creates it
+git cherry-pick 3e92558 0eeceb8                    # or: git rebase main keeps them on top
 ```
 
-Expected: push succeeds (docs-only commit). If branch protection rejects a direct push to main, stop and ask the user.
+(Concretely: after branching from local main — which already has both commits — the branch contains them automatically; just do not `git push origin main`.) The docs commits then land on main via PR 1's squash-merge, together with the #67 fix. Note this in PR 1's body ("carries the series' design spec + plan docs").
 
 - [ ] **Step 0.2: Re-baseline**
 
 ```bash
+git checkout main && git pull origin main
 uv sync --group dev
 PYTHONUTF8=1 uv run pytest -q
 ```
 
-Expected: `736 passed, 1 skipped, 1 failed` — the 1 failure must be exactly `test_load_yaml_error_names_the_file` (see environment notes). Any other failure: stop and investigate.
+Expected: `736 passed, 1 skipped, 1 failed` — the 1 failure must be exactly `test_load_yaml_error_names_the_file` (see environment notes). Any other failure: stop and investigate. (Local main may be behind remote by the two docs commits — that's fine; the branch in Step 1.1 cuts from local main and brings them.)
 
 ---
 
@@ -130,8 +134,8 @@ Fixes #67
 
 1. **Copilot:** poll `gh pr view <n> --json reviews --jq '.reviews[] | "\(.author.login) \(.state)"'` until `copilot-pull-request-reviewer` appears. Read its findings (inline comments: `gh api repos/Hochfrequenz/makoralle/pulls/<n>/comments --jq '.[] | .path, .body, ---'`). Implement valid findings, push. Dismiss/argue invalid ones in a PR comment.
 2. **Opus:** dispatch a review subagent (model `opus`) with the PR number and instruction to review the full diff against this plan's PR section + the spec; implement valid findings, push.
-3. **Another round** by either reviewer **only if** a finding reshaped substantial code.
-4. **CI:** poll `gh pr checks <n>` until every check passes.
+3. **Another round** by either reviewer **ONLY if necessary** (Iff — e.g. a finding reshaped substantial code or introduced a new defect surface); not by default.
+4. **CI:** poll `gh pr checks <n>` until every check passes (required: pytest 3.11–3.14, lint, type_check, coverage, packaging, spell_check, format). Never push to main directly; merge only `gh pr merge <n> --squash` after green.
 
 - [ ] **Step 1.6: Squash-merge and reset**
 
