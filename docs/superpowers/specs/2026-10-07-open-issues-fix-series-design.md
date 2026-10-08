@@ -96,9 +96,9 @@ efoli 2.4.1 (latest PyPI; not currently a makoralle dependency at all) provides
 
 **Change:**
 
-- `pyproject.toml`: add `efoli==2.4.1` (spec style matching existing deps); lock with
-  `uv sync`. Note for the PR description: efoli pulls in `pytz`, a new transitive
-  runtime dependency.
+- `pyproject.toml`: add `efoli>=2.4.1` (floor pin, matching the repo's dependency
+  style); lock with `uv sync`. Note for the PR description: efoli pulls in `pytz`, a
+  new transitive runtime dependency.
 - `FormatversionEntry.gueltig_ab` stops being a hand-maintained input: derived via
   efoli from `fv`. It becomes a `@computed_field` so `model_dump()` still ships the
   date to the stdlib-only webapp twin via `write_json` — the deliberate contrast with
@@ -165,7 +165,7 @@ already agree on.
 
 - **#81:** a consumer outside the three checked repos still storing
   `format_version` would silently load `document_version = None`. Mitigated by the
-  issue's dataset/consuumer survey and the README migration note; accepted by the
+  issue's dataset/consumer survey and the README migration note; accepted by the
   issue explicitly.
 - **#79:** dataset snapshots newer than the installed efoli now fail validation
   until efoli is bumped — intended (loud coupling), and the error message says so.

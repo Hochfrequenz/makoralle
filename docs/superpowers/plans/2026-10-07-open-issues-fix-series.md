@@ -369,8 +369,7 @@ def test_the_drift_check_runs_before_the_table_checks() -> None:
 
 
 def test_a_derived_table_dumps_and_round_trips() -> None:
-    # Constructed via model_validate like every existing test in this file: the pydantic
-    # mypy plugin is not enabled, so dict kwargs here would fail the unittests mypy gate.
+    # Constructed via model_validate like every existing table construction in this file.
     table = Formatversionen.model_validate(
         {"default": "FV2604", "bundles": [{"fv": "FV2604"}, {"fv": "FV2610"}]}
     )
@@ -459,7 +458,7 @@ class FormatversionEntry(BaseModel):
         return self
 ```
 
-- `IsoDate` is already importable from `makoralle.models.source` (extend the existing import there).
+- `IsoDate` is already imported at `formatversion.py:21` — no import change needed.
 - `load_*`, `write_json`: **no changes**.
 - `_consistent` and `in_force`: one narrowing change each — with
   `gueltig_ab: IsoDate | None`, mypy `--strict` rejects their `str` comparisons (4
@@ -547,8 +546,8 @@ Fixes #79
 
 Two edits, no output change:
 
-1. "The *shape* of a fully readable ref step is a separate question, and the two emitters **still differ** there:" → "The *shape* of a fully readable ref step is a separate question, and the two emitters **differ there by decision** (makoralle#36):" (rest of that sentence unchanged).
-2. Final sentence: "…which is a decision about what the diagram should say rather than a cleanup: makoralle#36." → "…which makoralle#36 decided: the split stays — a readable `ref` names its receiver in prose on WSD's single-lifeline self-message, and Mermaid draws the arrow the title spells out."
+1. "The *shape* of a fully readable ref step is a separate question, and the two emitters still differ there:" → "The *shape* of a fully readable ref step is a separate question, and the two emitters **differ there by decision** (makoralle#36):" (rest of that sentence unchanged; the old string has no bold markers — match it exactly).
+2. Final sentence: "…which is a decision about what the diagram should say rather than a cleanup: makoralle#36." → "…which makoralle#36 decided: the split stays — the readable `"ref "` (space-prefix) form names its receiver in prose on WSD's single-lifeline self-message, the colon/dot forms keep their sender→receiver arrows, and Mermaid draws the arrow the title spells out."
 
 - [ ] **Step 4.3: Update the `wsd.py` comment (lines ~489–497)**
 

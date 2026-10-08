@@ -22,11 +22,12 @@ class PIDMapping(BaseModel):
     #: the NEXT column, which holds a chapter reference rather than a document name — the
     #: two are easy to confuse.
     #:
-    #: Sometimes *reported* to be what the Sparte columns are computed from. The shipped
+    #: Sometimes *reported* (PID 4.0 workbook; refuted in makoralle#67) to be what the
+    #: Sparte columns are computed from. The shipped
     #: corpus refutes that: ``mehr-_mindermengenabrechnung_zwischen_nb_und_lf`` and
     #: ``…_nb_und_mgv`` each carry 31004 ``'Stornorechnung'`` with identical Anwendungsfall
     #: and identical ``prozessbeschreibung_dokument``, and opposite Sparte cells (dataset
-    #: v0.0.20). Treat this as a document label, not as a sparte signal.
+    #: v0.0.20). Treat this as a document label, not as a Sparte signal.
     prozessbeschreibung_dokument: str | None = None
     prozessbeschreibung_kapitel: str | None = None
     bezeichnung_sequenzdiagramm: str | None = None
