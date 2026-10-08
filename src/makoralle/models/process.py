@@ -90,10 +90,11 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     nobody should expect a diff from touching it. Unifying the rule the other way —
     self-message for the colon form too — would reshape 7 arrows whose ref title names their
     receiver ("ref: Deaktivierung … vom BIKO an NB"), which is a decision about what the
-    diagram should say rather than a cleanup, which makoralle#36 decided: the split stays — the
-    readable ``"ref "`` (space-prefix) form names its receiver in prose on WSD's single-lifeline
-    self-message, the colon/dot forms keep their sender→receiver arrows, and Mermaid draws the
-    arrow the title spells out.
+    diagram should say rather than a cleanup, which makoralle#36 decided: the split stays — WSD
+    draws the readable ``"ref "`` (space-prefix) form as a single-lifeline self-message, the
+    colon/dot forms keep their sender→receiver arrows, and Mermaid keeps the arrow whenever both
+    endpoints were read (whether or not the title spells the receiver out), plus its subprocess
+    note when a ``subprocess_ref`` was parsed.
     """
     return bool(subprocess_ref) or bool(REF_PREFIX.match((message or "").strip()))
 
