@@ -77,8 +77,9 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     party twice, so both emitters draw the same self-arrow.
 
     Mermaid's "Subprocess call" note is keyed on a parsed ``subprocess_ref`` rather than on the
-    message, so that one disagreeing step gets no note at all — its ``subprocess_ref`` is ``None``,
-    while 114 of the 142 same-party ``"ref "`` steps do carry one.
+    message (and drawn only when the step's two endpoints differ), so that one disagreeing step
+    gets no note at all — its ``subprocess_ref`` is ``None``, while 114 of the 142 same-party
+    ``"ref "`` steps do carry one.
 
     Both of those counts are over the space form — ``_has_ref_prefix`` in the WSD emitter, i.e.
     ``startswith("ref ")`` — and not over what this function accepts. Counting everything it accepts
@@ -94,7 +95,7 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     draws the readable ``"ref "`` (space-prefix) form as a single-lifeline self-message, the
     colon/dot forms keep their sender→receiver arrows, and Mermaid keeps the arrow whenever both
     endpoints were read (whether or not the title spells the receiver out), plus its subprocess
-    note when a ``subprocess_ref`` was parsed.
+    note when a ``subprocess_ref`` was parsed and the two endpoints differ.
     """
     return bool(subprocess_ref) or bool(REF_PREFIX.match((message or "").strip()))
 
