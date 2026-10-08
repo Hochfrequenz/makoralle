@@ -1,8 +1,8 @@
 """``format_version`` meant the document's own version ("4.1"); now that a real Formatversion
-("FV2604") exists on the same record, the old name is a misnomer. One release keeps it as an
-input alias so every committed record still loads."""
-
-import warnings
+("FV2604") exists on the same record, the old name is a misnomer. The input alias and the
+deprecated read-only property shipped in 0.0.23–0.0.24 are removed: a record that still spells
+the old key loads with ``document_version = None`` and no error, because the models ignore
+unknown keys."""
 
 import pytest
 from pydantic import ValidationError
@@ -46,28 +46,23 @@ def test_the_renamed_fields_stay_where_format_version_was() -> None:
     ]
 
 
-def test_old_key_still_validates_into_the_new_field() -> None:
+def test_the_removed_key_is_no_longer_read() -> None:
+    """The alias is gone: an old record loads with ``document_version = None`` and no error."""
     tree = DecisionTree.model_validate({"id": "E_0401", "name": "x", "format_version": "4.1"})
-    assert tree.document_version == "4.1"
-    assert "format_version" not in tree.model_dump()
+    assert tree.document_version is None
     liste = Codeliste.model_validate({"id": "S_0055", "name": "x", "codes": [], "format_version": "4.1"})
-    assert liste.document_version == "4.1"
-    assert "format_version" not in liste.model_dump()
+    assert liste.document_version is None
 
 
-def test_old_attribute_reads_through_with_a_deprecation_warning() -> None:
+def test_the_deprecated_properties_are_gone() -> None:
+    """Both halves of the breaking change are pinned: the property must not come back either."""
     tree = DecisionTree(id="E_0401", name="x", document_version="4.1")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        assert tree.format_version == "4.1"
-    assert caught and issubclass(caught[0].category, DeprecationWarning)
-    assert "DecisionTree.format_version is now document_version" in str(caught[0].message)
-
-
-def test_codeliste_old_attribute_reads_through_with_a_deprecation_warning() -> None:
     liste = Codeliste(id="S_0055", name="x", codes=[], document_version="4.1")
-    with pytest.warns(DeprecationWarning, match="Codeliste.format_version is now document_version"):
-        assert liste.format_version == "4.1"
+    # __getattribute__ (not an attribute read): the pin IS the absence of the property.
+    with pytest.raises(AttributeError):
+        tree.__getattribute__("format_version")
+    with pytest.raises(AttributeError):
+        liste.__getattribute__("format_version")
 
 
 def test_formatversion_is_validated() -> None:

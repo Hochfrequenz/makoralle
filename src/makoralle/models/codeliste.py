@@ -7,10 +7,9 @@ AHB points at them by list id, so a consumer needs the contents to know the admi
 Ablehnungsgründe of a step.
 """
 
-import warnings
 from typing import Self
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 
 from makoralle.models.formatversion import Formatversion
 from makoralle.models.source import SourceDocument
@@ -48,22 +47,12 @@ class Codeliste(BaseModel):
     source: str = ""
     ebd_id: str | None = None
     ebd_name: str | None = None
-    # The document's own version ("4.1"). Was `format_version` until 0.0.23 -- kept as an input
-    # alias for one release because every committed record spells it that way.
-    document_version: str | None = Field(
-        default=None, validation_alias=AliasChoices("document_version", "format_version")
-    )
+    document_version: str | None = None
     # The BDEW Formatversion the bundle was built for ("FV2604"). None for records parsed
     # outside a bundle (a bare `makorele run-docs` with no bundle.yaml).
     formatversion: Formatversion | None = None
     source_document: SourceDocument | None = None
     codes: list[CodeEntry]
-
-    @property
-    def format_version(self) -> str | None:
-        """Deprecated spelling of :attr:`document_version`; scheduled for removal in 0.0.24."""
-        warnings.warn("Codeliste.format_version is now document_version", DeprecationWarning, stacklevel=2)
-        return self.document_version
 
     @model_validator(mode="after")
     def _versions_agree(self) -> Self:

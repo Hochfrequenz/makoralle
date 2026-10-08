@@ -10,10 +10,9 @@ with ``steps == []`` and a ``kind`` saying which of those it is, so a process's 
 resolves to a statement instead of to nothing.
 """
 
-import warnings
 from typing import Annotated, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, Field, StringConstraints, model_validator
+from pydantic import BaseModel, StringConstraints, model_validator
 
 from makoralle.models.formatversion import Formatversion
 from makoralle.models.source import SourceDocument
@@ -156,22 +155,12 @@ class DecisionTree(BaseModel):
     codelisten: list[str] | None = None
     use_ebd: str | None = None
     note: str | None = None
-    # The document's own version ("4.1"). Was `format_version` until 0.0.23 -- kept as an input
-    # alias for one release because every committed record spells it that way.
-    document_version: str | None = Field(
-        default=None, validation_alias=AliasChoices("document_version", "format_version")
-    )
+    document_version: str | None = None
     # The BDEW Formatversion the bundle was built for ("FV2604"). None for records parsed
     # outside a bundle (a bare `makorele run-docs` with no bundle.yaml).
     formatversion: Formatversion | None = None
     source_document: SourceDocument | None = None
     steps: list[DecisionStep] = []
-
-    @property
-    def format_version(self) -> str | None:
-        """Deprecated spelling of :attr:`document_version`; scheduled for removal in 0.0.24."""
-        warnings.warn("DecisionTree.format_version is now document_version", DeprecationWarning, stacklevel=2)
-        return self.document_version
 
     @model_validator(mode="after")
     def _versions_agree(self) -> Self:

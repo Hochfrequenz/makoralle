@@ -101,16 +101,13 @@ publication `date`, the `document_version`, a `valid_from`/`valid_to` window and
 instead of free text, and `Process`, `DecisionTree` and `Codeliste` carry an optional
 `formatversion`, set when the record was built inside a bundle.
 
-**Breaking in 0.0.23:** on `DecisionTree` and `Codeliste`, `format_version` is renamed to
-`document_version`, because the field always held the document's version (`"4.1"`) and never a
-Formatversion. The old key still validates as input, and a read-only `format_version` property
-returns the value with a `DeprecationWarning`; both are scheduled for removal in 0.0.24. Once they
-are gone, a stored record that still says `format_version` loads with `document_version = None`
-and no error, because the models ignore unknown keys, so re-save stored YAML/JSON with
-`document_version` now. The alias also only works at runtime: a type checker without the pydantic
-mypy plugin rejects `DecisionTree(format_version=...)` as an unexpected keyword, and mypy then
-suggests `formatversion`, which is a different field. A `document_version` that disagrees with its
-`source_document.document_version` is rejected.
+**Breaking in 0.0.23, removed in 0.1.0:** on `DecisionTree` and `Codeliste`, `format_version`
+is renamed to `document_version`, because the field always held the document's version
+(`"4.1"`) and never a Formatversion. 0.0.23 and 0.0.24 kept the old key as an input alias and
+a deprecated read-only property; both are now removed. A stored record that still says
+`format_version` loads with `document_version = None` and no error, because the models ignore
+unknown keys — re-save stored YAML/JSON with `document_version`. A `document_version` that
+disagrees with its `source_document.document_version` is still rejected.
 
 `config.ahb_pid_url(pid, formatversion)` pins AHB links to `…/ahb/<FV>/<pid>`, and
 `webapp_export.run(..., fv=…)` scopes diagram URLs to `/diagrams/<FV>/…`. Both raise `ValueError`
