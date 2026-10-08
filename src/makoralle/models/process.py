@@ -69,7 +69,7 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     counterpart in one output and a self-message in the other.
 
     The *shape* of a fully readable ref step is a separate question, and the two emitters
-    still differ there: WSD draws a self-message for the "ref " form only, Mermaid an arrow.
+    **differ there by decision** (makoralle#36): WSD draws a self-message for the "ref " form only, Mermaid an arrow.
     Measured against the released corpus (v0.0.15), that
     difference is visible in exactly **one** step — `herstellung_einer_100_lf-zuordnung…`
     Nr. 9, `NB -> LFA`, "ref Abrechnungsdaten Bilanzkreisabrechnung", where WSD writes
@@ -90,7 +90,10 @@ def is_ref_step(message: str | None, subprocess_ref: str | None = None) -> bool:
     nobody should expect a diff from touching it. Unifying the rule the other way —
     self-message for the colon form too — would reshape 7 arrows whose ref title names their
     receiver ("ref: Deaktivierung … vom BIKO an NB"), which is a decision about what the
-    diagram should say rather than a cleanup: makoralle#36.
+    diagram should say rather than a cleanup, which makoralle#36 decided: the split stays — the
+    readable ``"ref "`` (space-prefix) form names its receiver in prose on WSD's single-lifeline
+    self-message, the colon/dot forms keep their sender→receiver arrows, and Mermaid draws the
+    arrow the title spells out.
     """
     return bool(subprocess_ref) or bool(REF_PREFIX.match((message or "").strip()))
 

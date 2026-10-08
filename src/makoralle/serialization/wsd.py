@@ -493,8 +493,8 @@ def emit_wsd(  # pylint: disable=too-many-locals,too-many-branches,too-many-stat
         # draws it, receiver and all. The broader rule applies only where #78 is at issue:
         # a ref whose *other* endpoint was not read never named a second actor, so it is a
         # self-message on the lifeline it does name rather than a note about a missing
-        # counterpart. Unifying the shape for readable steps is a separate question, filed
-        # as makoralle#36.
+        # counterpart. Unifying the shape for readable steps was decided against in
+        # makoralle#36: the split is deliberate.
         if (is_ref_step(msg, step.subprocess_ref) and not both_ends_known) or _has_ref_prefix(msg):
             # A "ref" is a self-referenced subprocess on one lifeline, not a
             # message to another participant. Render as a self-message arrow
