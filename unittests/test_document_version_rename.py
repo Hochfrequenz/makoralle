@@ -58,10 +58,11 @@ def test_the_deprecated_properties_are_gone() -> None:
     """Both halves of the breaking change are pinned: the property must not come back either."""
     tree = DecisionTree(id="E_0401", name="x", document_version="4.1")
     liste = Codeliste(id="S_0055", name="x", codes=[], document_version="4.1")
+    # __getattribute__ (not an attribute read): the pin IS the absence of the property.
     with pytest.raises(AttributeError):
-        tree.format_version  # noqa: B018
+        tree.__getattribute__("format_version")
     with pytest.raises(AttributeError):
-        liste.format_version  # noqa: B018
+        liste.__getattribute__("format_version")
 
 
 def test_formatversion_is_validated() -> None:
