@@ -191,9 +191,7 @@ def test_the_drift_check_runs_before_the_table_checks() -> None:
 
 def test_a_derived_table_dumps_and_round_trips() -> None:
     # Constructed via model_validate like every existing table construction in this file.
-    table = Formatversionen.model_validate(
-        {"default": "FV2604", "bundles": [{"fv": "FV2604"}, {"fv": "FV2610"}]}
-    )
+    table = Formatversionen.model_validate({"default": "FV2604", "bundles": [{"fv": "FV2604"}, {"fv": "FV2610"}]})
     dumped = table.model_dump(mode="json")
     assert dumped["bundles"][0]["gueltig_ab"] == "2026-04-01"
     assert Formatversionen.model_validate(dumped) == table
