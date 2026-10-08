@@ -54,6 +54,16 @@ def test_the_removed_key_is_no_longer_read() -> None:
     assert liste.document_version is None
 
 
+def test_the_deprecated_properties_are_gone() -> None:
+    """Both halves of the breaking change are pinned: the property must not come back either."""
+    tree = DecisionTree(id="E_0401", name="x", document_version="4.1")
+    liste = Codeliste(id="S_0055", name="x", codes=[], document_version="4.1")
+    with pytest.raises(AttributeError):
+        tree.format_version  # noqa: B018
+    with pytest.raises(AttributeError):
+        liste.format_version  # noqa: B018
+
+
 def test_formatversion_is_validated() -> None:
     with pytest.raises(ValidationError):
         DecisionTree(id="E_0401", name="x", formatversion="4.1")
