@@ -177,8 +177,9 @@ def test_an_fv_efoli_does_not_know_is_rejected(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_fv2104_whose_start_efoli_does_not_know_is_rejected() -> None:
-    """efoli knows FV2104 but not its start date — the same loud failure, not a KeyError."""
-    with pytest.raises(ValidationError, match="bump efoli"):
+    """efoli knows FV2104 but not its start date — a loud failure that does NOT send the
+    reader chasing an efoli bump no release can bring (its earliest version has none)."""
+    with pytest.raises(ValidationError, match="don't list it in the table"):
         FormatversionEntry(fv="FV2104")
 
 

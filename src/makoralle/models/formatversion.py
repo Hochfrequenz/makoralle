@@ -41,7 +41,13 @@ def _efoli_gueltig_ab(fv: str) -> str:
     try:
         return get_edifact_format_version_valid_from(version).isoformat()
     except KeyError as e:
-        raise ValueError(f"{fv}: efoli knows the version but not its start date — bump efoli") from e
+        # efoli's earliest version (FV2104) has no start date and never will: the map is
+        # derived from upper thresholds, and the oldest version has no lower bound. A bump
+        # cannot fix it — the table simply must not list it.
+        raise ValueError(
+            f"{fv}: efoli knows the version but not its start date (efoli never defines one "
+            "for its earliest version) — don't list it in the table"
+        ) from e
 
 
 class Bundle(BaseModel):
@@ -75,7 +81,9 @@ class FormatversionEntry(BaseModel):
                 f"{self.fv}: gueltig_ab {self.gueltig_ab!r} disagrees with efoli ({expected}) — "
                 "efoli is the source of truth; bump efoli, not this table"
             )
-        self.gueltig_ab = expected
+        # Plain assignment, not a validated one: this model must never enable
+        # validate_assignment (the assignment would re-enter this validator and recurse).
+        self.__dict__["gueltig_ab"] = expected
         return self
 
 
@@ -111,6 +119,8 @@ class Formatversionen(BaseModel):
         day = (on or datetime.date.today()).isoformat()
         current = self.bundles[0].fv
         for entry in self.bundles:
+            # The None guard is for unvalidated construction (model_construct/model_copy);
+            # entry validation always leaves the date set, as in _consistent above.
             if entry.gueltig_ab is not None and entry.gueltig_ab <= day:
                 current = entry.fv
         return current
