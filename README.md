@@ -106,7 +106,8 @@ is renamed to `document_version`, because the field always held the document's v
 (`"4.1"`) and never a Formatversion. 0.0.23 and 0.0.24 kept the old key as an input alias and
 a deprecated read-only property; both are now removed. A stored record that still says
 `format_version` loads with `document_version = None` and no error, because the models ignore
-unknown keys — re-save stored YAML/JSON with `document_version`.
+unknown keys — re-save stored YAML/JSON with `document_version`. A `document_version` that
+disagrees with its `source_document.document_version` is still rejected.
 
 `config.ahb_pid_url(pid, formatversion)` pins AHB links to `…/ahb/<FV>/<pid>`, and
 `webapp_export.run(..., fv=…)` scopes diagram URLs to `/diagrams/<FV>/…`. Both raise `ValueError`
