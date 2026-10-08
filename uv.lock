@@ -231,6 +231,18 @@ wheels = [
 ]
 
 [[package]]
+name = "efoli"
+version = "2.4.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytz" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f2/f9/aaa9f00716ad66fd9f6bfdcb9b2758c90955cd5a26d5f0c0b808eaf4223e/efoli-2.4.1.tar.gz", hash = "sha256:ed96d7454bbb63e7fae65634a3fc808d60f1ab5d5853b98b69723d056dc4164d", size = 63358, upload-time = "2026-10-01T09:45:45.443Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/aa/90/fa2c88851f20b4a2c9b470da52420f358f5c35e1eaddde3c2a4079d631bc/efoli-2.4.1-py3-none-any.whl", hash = "sha256:a111fbe6c5cd701673b1cd684ddc5ae1de904e6954e95570cb730a2bde393427", size = 7132, upload-time = "2026-10-01T09:45:44.607Z" },
+]
+
+[[package]]
 name = "filelock"
 version = "3.32.0"
 source = { registry = "https://pypi.org/simple" }
@@ -518,6 +530,7 @@ wheels = [
 name = "makoralle"
 source = { editable = "." }
 dependencies = [
+    { name = "efoli" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
@@ -559,6 +572,7 @@ type-check = [
 
 [package.metadata]
 requires-dist = [
+    { name = "efoli", specifier = ">=2.4.1" },
     { name = "pydantic", specifier = ">=2.1" },
     { name = "pyyaml", specifier = ">=6.0" },
 ]
@@ -877,6 +891,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/f1/51/276f964496a5714ab9f320896195639086881c2b39c03b5ad13de84acbb8/python_discovery-1.5.0.tar.gz", hash = "sha256:3e014c6327154d3dda27939a9a0dc9c5c000439f1906d3f303b48f984bd2ecef", size = 72483, upload-time = "2026-07-21T13:14:14.641Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/7b/14882602ddee241d7984a742fcb423cb4a30fb0d6efc546ac3129fba475a/python_discovery-1.5.0-py3-none-any.whl", hash = "sha256:70c4fc61b4e7404e44f01d6fc44a715c4d685ca6cea83d295922f05891877c98", size = 34205, upload-time = "2026-07-21T13:14:13.398Z" },
+]
+
+[[package]]
+name = "pytz"
+version = "2026.5"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/14/21/d83d6ef28c4c912c4bb4d1dcf591f7b8c6bde87b9c66f9f454677314e16d/pytz-2026.5.tar.gz", hash = "sha256:fa23724b9c486543b9ff54a327ee7569ac83ade54bb9afd0fc18676620401c86", size = 318572, upload-time = "2026-10-04T02:37:58.719Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4f/ef/c66110d46fb800dda0bf33164182dfadabe26a90e4476844d502a23dca8e/pytz-2026.5-py2.py3-none-any.whl", hash = "sha256:e658af3757f9e26a9d25dd2aff38335acd92bc9104f890a894b2c1ba28311b03", size = 506342, upload-time = "2026-10-04T02:37:56.814Z" },
 ]
 
 [[package]]

@@ -78,7 +78,8 @@ invent what it never held — a condition, a second alternative, or an offset in
 A *Formatversion* (`FV2604`) is BDEW's half-yearly release, and it is a bundle rather than a
 document. A `Bundle` (in `models.formatversion`) names, for each document key (`gpke_teil1`,
 `ebd`, …), the edition that applies. `Formatversionen` is the table of bundles: each row has a
-`gueltig_ab` (curated, not derived from the name), and the table names a `default`. `in_force`
+`gueltig_ab` (derived from efoli; a hand-written date must agree with it, and may be
+omitted), and the table names a `default`. `in_force`
 returns the name of the newest bundle in force on a given day, or of the oldest one before the
 first `gueltig_ab`. `write_json` writes a model as JSON with None fields left out. A dataset is a
 directory laid out as `formatversionen.yaml` plus one `<FV>/bundle.yaml` per Formatversion; the
