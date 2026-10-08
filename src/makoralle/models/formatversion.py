@@ -4,8 +4,9 @@ A *Formatversion* (``FV2604``) is not a document but a bundle: for every documen
 knows, the edition that applies. edi-energy documents (EBD, PID, Codelisten) are published per FV;
 the BNetzA process descriptions (GPKE, WiM, MaBiS) span several. So a bundle is a *selection* of
 editions, declared by hand next to the data it was built from, and the table of bundles says from
-which day each one is in force. The dates are curated, not derived from the name: FV2504 started on
-2025-06-06, not 2025-04-01.
+which day each one is in force. The dates come from efoli (Hochfrequenz), which encodes them:
+FV2504 became valid on 2025-06-06, not 2025-04-01. A hand-written ``gueltig_ab`` that disagrees
+with efoli is rejected — to move a date, bump efoli, not this table.
 """
 
 import datetime
@@ -15,12 +16,32 @@ from pathlib import Path
 from typing import Annotated, Self
 
 import yaml
+from efoli import EdifactFormatVersion, get_edifact_format_version_valid_from
 from pydantic import BaseModel, StringConstraints, model_validator
 
 from makoralle.config import FORMATVERSION_PATTERN
 from makoralle.models.source import IsoDate, SourceDocument
 
 Formatversion = Annotated[str, StringConstraints(pattern=FORMATVERSION_PATTERN)]
+
+
+def _efoli_gueltig_ab(fv: str) -> str:
+    """The FV's start date as efoli encodes it, as an ISO string.
+
+    Both failure modes are wrapped so the message tells the reader what to do: an FV
+    efoli's enum does not know (a future ``FV2704``) and one whose start efoli leaves
+    undefined (``FV2104``) both raise ``ValueError`` — makoralle never silently
+    tolerates an unknown bundle, because coupling dataset validity to efoli releases
+    is the point (makoralle#79).
+    """
+    try:
+        version = EdifactFormatVersion(fv)
+    except ValueError as e:
+        raise ValueError(f"{fv} is not known to efoli — bump efoli") from e
+    try:
+        return get_edifact_format_version_valid_from(version).isoformat()
+    except KeyError as e:
+        raise ValueError(f"{fv}: efoli knows the version but not its start date — bump efoli") from e
 
 
 class Bundle(BaseModel):
@@ -35,11 +56,27 @@ class Bundle(BaseModel):
 
 
 class FormatversionEntry(BaseModel):
-    """One row of the table: the bundle's name, from when it is in force, and who says so."""
+    """One row of the table: the bundle's name, from when it is in force, and who says so.
+
+    ``gueltig_ab`` is derived from efoli and may be omitted; a hand-written date is
+    accepted only where it agrees with efoli, so curation drift cannot happen quietly
+    (makoralle#79). ``quelle`` records who listed the bundle — not the date.
+    """
 
     fv: Formatversion
-    gueltig_ab: IsoDate
+    gueltig_ab: IsoDate | None = None
     quelle: str = ""
+
+    @model_validator(mode="after")
+    def _from_efoli(self) -> Self:
+        expected = _efoli_gueltig_ab(self.fv)
+        if self.gueltig_ab is not None and self.gueltig_ab != expected:
+            raise ValueError(
+                f"{self.fv}: gueltig_ab {self.gueltig_ab!r} disagrees with efoli ({expected}) — "
+                "efoli is the source of truth; bump efoli, not this table"
+            )
+        self.gueltig_ab = expected
+        return self
 
 
 class Formatversionen(BaseModel):
@@ -57,7 +94,8 @@ class Formatversionen(BaseModel):
         names = [b.fv for b in self.bundles]
         if len(set(names)) != len(names):
             raise ValueError("a Formatversion is listed twice")
-        dates = [b.gueltig_ab for b in self.bundles]
+        # Entry validation has already normalised every gueltig_ab to efoli's date.
+        dates = [b.gueltig_ab for b in self.bundles if b.gueltig_ab is not None]
         if any(a >= b for a, b in itertools.pairwise(dates)):
             raise ValueError("bundles must be sorted by gueltig_ab, no two on the same day")
         # Also rejects an empty table, which would leave in_force nothing to return.
@@ -73,7 +111,7 @@ class Formatversionen(BaseModel):
         day = (on or datetime.date.today()).isoformat()
         current = self.bundles[0].fv
         for entry in self.bundles:
-            if entry.gueltig_ab <= day:
+            if entry.gueltig_ab is not None and entry.gueltig_ab <= day:
                 current = entry.fv
         return current
 
