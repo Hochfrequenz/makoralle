@@ -164,7 +164,14 @@ def test_a_hand_written_date_that_disagrees_with_efoli_is_rejected() -> None:
         FormatversionEntry(fv="FV2510", gueltig_ab="2025-10-02")
 
 
-def test_an_fv_efoli_does_not_know_is_rejected() -> None:
+def test_an_fv_efoli_does_not_know_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The enum-miss branch, mocked so the pin survives efoli gaining new versions
+    (the dependency is a floor pin; a routine lock refresh must not break this test)."""
+
+    def _raise(value: str) -> None:
+        raise ValueError(f"{value} is not a valid EdifactFormatVersion")
+
+    monkeypatch.setattr("makoralle.models.formatversion.EdifactFormatVersion", _raise)
     with pytest.raises(ValidationError, match="bump efoli"):
         FormatversionEntry(fv="FV2704")
 
