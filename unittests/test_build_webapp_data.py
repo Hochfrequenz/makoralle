@@ -1285,3 +1285,14 @@ def test_no_source_document_means_no_key() -> None:
     ):
         assert "sourceDocument" not in build_index_entry(proc, has_bpmn=False, has_review=False, has_sequence=True)
         assert "sourceDocument" not in build_detail(proc, review_notes=[])
+
+
+def test_source_document_date_survives_a_yaml_loader_that_reads_dates() -> None:
+    # makorele quotes the date, but PyYAML reads an unquoted `date: 2025-10-30` as datetime.date,
+    # which json.dump refuses; the export must hand the app the ISO string either way.
+    text = "cross_references:\n  source_documents:\n    uc_sd:\n      file_name: x.pdf\n      date: 2025-10-30\n"
+    loaded = yaml.safe_load(text)
+    proc = {**SAMPLE, **loaded}
+    detail = build_detail(proc, review_notes=[])
+    assert detail["sourceDocument"] == {"fileName": "x.pdf", "date": "2025-10-30"}
+    json.dumps(detail)

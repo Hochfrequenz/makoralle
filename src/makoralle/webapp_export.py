@@ -7,6 +7,7 @@ Library API — `run(output_dir=..., webapp_dir=..., approvals_file=...)`. The t
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import shutil
@@ -82,6 +83,11 @@ def _source_document(process: dict[str, Any]) -> dict[str, Any] | None:
     so the hash is what lets the app join the two without a name table here. Only the fields the
     model has are emitted; a process without the record (every dataset before v0.0.34) gets no key at
     all rather than an empty object, so a reader can tell "unknown" from "known, no version".
+    ``valid_from``/``valid_to`` are not exported: no ``uc_sd`` record carries them (the BNetzA
+    Lesefassungen and the BDEW Anwendungshilfen stamp no validity window; the EBD and PID editions
+    beside it do, and those are not this field). ``date`` goes out as the ISO string: makorele writes
+    it quoted, but a YAML 1.1 loader would read an unquoted one as ``datetime.date``, which
+    ``json.dump`` refuses.
     """
     refs = process.get("cross_references") or {}
     docs = refs.get("source_documents") or {}
@@ -91,7 +97,8 @@ def _source_document(process: dict[str, Any]) -> dict[str, Any] | None:
     out: dict[str, Any] = {"fileName": uc_sd["file_name"]}
     for src, dst in (("sha256", "sha256"), ("document_version", "documentVersion"), ("date", "date")):
         if uc_sd.get(src):
-            out[dst] = uc_sd[src]
+            value = uc_sd[src]
+            out[dst] = value.isoformat() if isinstance(value, datetime.date) else str(value)
     return out
 
 
@@ -493,6 +500,10 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
     written: the caller would otherwise ship URLs the app 404s on. So does a process record
     whose own ``formatversion`` names a different one — a miswired per-bundle loop must not
     stamp the wrong Formatversion; a record carrying none (an unregenerated corpus) exports.
+
+    A record carrying ``cross_references.source_documents.uc_sd`` (every bundle since dataset
+    v0.0.34) also gets ``sourceDocument`` on its index row and its detail, see
+    :func:`_source_document`; one without it gets no such key.
     """
     if fv is not None:
         require_formatversion(fv)
