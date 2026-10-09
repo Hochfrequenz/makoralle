@@ -77,7 +77,10 @@ invent what it never held — a condition, a second alternative, or an offset in
 
 A *Formatversion* (`FV2604`) is BDEW's half-yearly release, and it is a bundle rather than a
 document. A `Bundle` (in `models.formatversion`) names, for each document key (`gpke_teil1`,
-`ebd`, …), the edition that applies. `Formatversionen` is the table of bundles: each row has a
+`ebd`, …), the edition that applies, and, in `categories`, which category (`GPKE`, `WiM`,
+`MaBiS`, `Sonstige`) the processes cut from a document get; a key there must be a document key,
+a document without an entry gives its processes `""`, and the table may be empty.
+`Formatversionen` is the table of bundles: each row has a
 `gueltig_ab` (derived from efoli; a hand-written date must agree with it, and may be
 omitted), and the table names a `default`. `in_force`
 returns the name of the newest bundle in force on a given day, or of the oldest one before the

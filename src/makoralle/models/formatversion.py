@@ -17,7 +17,7 @@ from typing import Annotated, Self
 
 import yaml
 from efoli import EdifactFormatVersion, get_edifact_format_version_valid_from
-from pydantic import BaseModel, StringConstraints, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from makoralle.config import FORMATVERSION_PATTERN
 from makoralle.models.source import IsoDate, SourceDocument
@@ -55,10 +55,35 @@ class Bundle(BaseModel):
 
     Lives at ``<dataset>/<FV>/bundle.yaml``, next to the ``output/`` and ``pipeline/`` it produced,
     so the directory is self-describing and the parser reads it from its own data root.
+
+    ``categories`` is the bundle's category table: for a document key, the category label
+    (``GPKE``, ``WiM``, ``MaBiS``, ``Sonstige`` today; a plain string, as ``Process.category`` is)
+    that the processes cut from that document get. The dataset declares it per bundle
+    (dataset#74), and makorele stamps ``process.category = bundle.categories.get(doc_key, "")``
+    for the document key the use case was cut from. A document without an entry gives its
+    processes ``""``; an empty table is valid, so every existing ``bundle.yaml`` keeps validating.
     """
 
     fv: Formatversion
     documents: dict[str, SourceDocument]
+    categories: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _categories_name_documents(self) -> Self:
+        """Every key of ``categories`` must be a key of ``documents``.
+
+        makorele looks a category up by the document key the use case was cut from, so a
+        category under a key no document has is dead text that reaches no process — most
+        likely a typo (``gpke_teil_2`` for ``gpke_teil2``) that would otherwise leave every
+        process of that document with ``""`` and nothing to say why.
+        """
+        unknown = sorted(set(self.categories) - set(self.documents))
+        if unknown:
+            raise ValueError(
+                f"categories name document keys the bundle does not have: {unknown}; "
+                f"its documents are {sorted(self.documents)}"
+            )
+        return self
 
 
 class FormatversionEntry(BaseModel):

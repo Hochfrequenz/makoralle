@@ -124,6 +124,46 @@ def test_a_bundle_names_its_editions(tmp_path: Path) -> None:
     assert bundle.documents["gpke_teil1"].date is None
 
 
+def test_a_bundle_without_categories_has_an_empty_table(tmp_path: Path) -> None:
+    """Every bundle.yaml written before the table keeps validating (dataset#74)."""
+    (tmp_path / "bundle.yaml").write_text(BUNDLE, "utf-8")
+    bundle = load_bundle(tmp_path / "bundle.yaml")
+    assert bundle.categories == {}
+    assert bundle.categories.get("gpke_teil1", "") == ""  # what makorele stamps for an unlisted document
+
+
+def test_a_bundle_declares_the_category_of_each_document(tmp_path: Path) -> None:
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories:\n  gpke_teil1: GPKE\n", "utf-8")
+    bundle = load_bundle(tmp_path / "bundle.yaml")
+    assert bundle.categories == {"gpke_teil1": "GPKE"}
+    assert bundle.categories.get("ebd", "") == ""  # a document without an entry: no category
+
+
+def test_a_category_under_a_key_no_document_has_is_rejected() -> None:
+    """A category nobody looks up is dead text, most likely a typo; the message names it."""
+    with pytest.raises(ValidationError, match=r"gpke_teil_2.*gpke_teil1") as excinfo:
+        Bundle.model_validate(
+            {
+                "fv": "FV2604",
+                "documents": {"gpke_teil1": {"file_name": "a.pdf"}},
+                "categories": {"gpke_teil1": "GPKE", "gpke_teil_2": "GPKE"},
+            }
+        )
+    assert "'gpke_teil_2'" in str(excinfo.value)
+    assert "ebd" not in str(excinfo.value)  # only the bundle's own documents are listed as known
+
+
+def test_write_json_carries_the_category_table(tmp_path: Path) -> None:
+    """The app's build reads the JSON twin, so the table must reach it and read back unchanged."""
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories:\n  gpke_teil1: GPKE\n  ebd: Sonstige\n", "utf-8")
+    bundle = load_bundle(tmp_path / "bundle.yaml")
+    dest = tmp_path / "bundle.json"
+    write_json(bundle, dest)
+    payload = json.loads(dest.read_text("utf-8"))
+    assert payload["categories"] == {"gpke_teil1": "GPKE", "ebd": "Sonstige"}
+    assert Bundle.model_validate(payload) == bundle
+
+
 def test_write_json_is_the_yaml_as_the_app_reads_it(tmp_path: Path) -> None:
     """The app's build script is stdlib-only, so the JSON twin is what it consumes."""
     (tmp_path / "bundle.yaml").write_text(BUNDLE, "utf-8")
