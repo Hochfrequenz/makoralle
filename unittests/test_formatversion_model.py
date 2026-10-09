@@ -124,6 +124,66 @@ def test_a_bundle_names_its_editions(tmp_path: Path) -> None:
     assert bundle.documents["gpke_teil1"].date is None
 
 
+def test_a_bundle_without_categories_has_an_empty_table(tmp_path: Path) -> None:
+    """Every bundle.yaml written before the table keeps validating (dataset#74)."""
+    (tmp_path / "bundle.yaml").write_text(BUNDLE, "utf-8")
+    bundle = load_bundle(tmp_path / "bundle.yaml")
+    assert bundle.categories == {}  # so makorele's .get(doc_key, "") gives "" for every document
+    write_json(bundle, tmp_path / "bundle.json")
+    payload = json.loads((tmp_path / "bundle.json").read_text("utf-8"))
+    assert payload["categories"] == {}  # the empty table survives exclude_none: {} is not None
+
+
+def test_a_bundle_declares_the_category_of_each_document(tmp_path: Path) -> None:
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories:\n  gpke_teil1: GPKE\n", "utf-8")
+    bundle = load_bundle(tmp_path / "bundle.yaml")
+    assert bundle.categories == {"gpke_teil1": "GPKE"}  # ebd has no entry: makorele's .get gives ""
+
+
+def test_a_category_under_a_key_no_document_has_is_rejected() -> None:
+    """A category nobody looks up is dead text, most likely a typo; the message names it."""
+    with pytest.raises(ValidationError, match=r"gpke_teil_2.*gpke_teil1") as excinfo:
+        Bundle.model_validate(
+            {
+                "fv": "FV2604",
+                "documents": {"gpke_teil1": {"file_name": "a.pdf"}},
+                "categories": {"gpke_teil1": "GPKE", "gpke_teil_2": "GPKE"},
+            }
+        )
+    assert "'gpke_teil_2'" in str(excinfo.value)
+    assert "ebd" not in str(excinfo.value)  # only the bundle's own documents are listed as known
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_a_blank_category_label_is_rejected(blank: str) -> None:
+    """``mabis: ""`` would reproduce the empty category the table exists to end, past any gate
+    that only checks the key is present."""
+    with pytest.raises(ValidationError, match="categories"):
+        Bundle.model_validate(
+            {"fv": "FV2604", "documents": {"gpke_teil1": {"file_name": "a.pdf"}}, "categories": {"gpke_teil1": blank}}
+        )
+
+
+def test_a_bare_categories_header_is_a_yaml_null_and_rejected(tmp_path: Path) -> None:
+    """An empty table is spelled ``categories: {}``; the bare header is None, as with ``documents:``."""
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories:\n", "utf-8")
+    with pytest.raises(ValidationError, match="dict_type"):
+        load_bundle(tmp_path / "bundle.yaml")
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories: {}\n", "utf-8")
+    assert load_bundle(tmp_path / "bundle.yaml").categories == {}
+
+
+def test_write_json_carries_the_category_table(tmp_path: Path) -> None:
+    """The app's build reads the JSON twin, so the table must reach it and read back unchanged."""
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories:\n  gpke_teil1: GPKE\n  ebd: Sonstige\n", "utf-8")
+    bundle = load_bundle(tmp_path / "bundle.yaml")
+    dest = tmp_path / "bundle.json"
+    write_json(bundle, dest)
+    payload = json.loads(dest.read_text("utf-8"))
+    assert payload["categories"] == {"gpke_teil1": "GPKE", "ebd": "Sonstige"}
+    assert Bundle.model_validate(payload) == bundle
+
+
 def test_write_json_is_the_yaml_as_the_app_reads_it(tmp_path: Path) -> None:
     """The app's build script is stdlib-only, so the JSON twin is what it consumes."""
     (tmp_path / "bundle.yaml").write_text(BUNDLE, "utf-8")
