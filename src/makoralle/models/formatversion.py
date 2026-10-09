@@ -23,6 +23,7 @@ from makoralle.config import FORMATVERSION_PATTERN
 from makoralle.models.source import IsoDate, SourceDocument
 
 Formatversion = Annotated[str, StringConstraints(pattern=FORMATVERSION_PATTERN)]
+CategoryLabel = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 def _efoli_gueltig_ab(fv: str) -> str:
@@ -62,13 +63,16 @@ class Bundle(BaseModel):
     (dataset#74); the intended reader is makorele, which is to stamp
     ``process.category = bundle.categories.get(doc_key, "")`` for the document key the use case
     was cut from — nothing in makoralle itself reads the table. A document without an entry
-    is meant to give its processes ``""``; an empty table is valid, so every existing
-    ``bundle.yaml`` keeps validating.
+    is meant to give its processes ``""``; a blank label (``mabis: ""``) is rejected, because a
+    gate that checks only that the key is present would otherwise let the empty category it is
+    there to end survive. An empty table is valid, so every existing ``bundle.yaml`` keeps
+    validating; it is spelled ``categories: {}`` — a bare ``categories:`` header is a YAML null
+    and is rejected, as a bare ``documents:`` is.
     """
 
     fv: Formatversion
     documents: dict[str, SourceDocument]
-    categories: dict[str, str] = Field(default_factory=dict)
+    categories: dict[str, CategoryLabel] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _categories_name_documents(self) -> Self:

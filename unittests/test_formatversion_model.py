@@ -128,15 +128,16 @@ def test_a_bundle_without_categories_has_an_empty_table(tmp_path: Path) -> None:
     """Every bundle.yaml written before the table keeps validating (dataset#74)."""
     (tmp_path / "bundle.yaml").write_text(BUNDLE, "utf-8")
     bundle = load_bundle(tmp_path / "bundle.yaml")
-    assert bundle.categories == {}
-    assert bundle.categories.get("gpke_teil1", "") == ""  # what makorele stamps for an unlisted document
+    assert bundle.categories == {}  # so makorele's .get(doc_key, "") gives "" for every document
+    write_json(bundle, tmp_path / "bundle.json")
+    payload = json.loads((tmp_path / "bundle.json").read_text("utf-8"))
+    assert payload["categories"] == {}  # the empty table survives exclude_none: {} is not None
 
 
 def test_a_bundle_declares_the_category_of_each_document(tmp_path: Path) -> None:
     (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories:\n  gpke_teil1: GPKE\n", "utf-8")
     bundle = load_bundle(tmp_path / "bundle.yaml")
-    assert bundle.categories == {"gpke_teil1": "GPKE"}
-    assert bundle.categories.get("ebd", "") == ""  # a document without an entry: no category
+    assert bundle.categories == {"gpke_teil1": "GPKE"}  # ebd has no entry: makorele's .get gives ""
 
 
 def test_a_category_under_a_key_no_document_has_is_rejected() -> None:
@@ -151,6 +152,25 @@ def test_a_category_under_a_key_no_document_has_is_rejected() -> None:
         )
     assert "'gpke_teil_2'" in str(excinfo.value)
     assert "ebd" not in str(excinfo.value)  # only the bundle's own documents are listed as known
+
+
+@pytest.mark.parametrize("blank", ["", "  "])
+def test_a_blank_category_label_is_rejected(blank: str) -> None:
+    """``mabis: ""`` would reproduce the empty category the table exists to end, past any gate
+    that only checks the key is present."""
+    with pytest.raises(ValidationError, match="categories"):
+        Bundle.model_validate(
+            {"fv": "FV2604", "documents": {"gpke_teil1": {"file_name": "a.pdf"}}, "categories": {"gpke_teil1": blank}}
+        )
+
+
+def test_a_bare_categories_header_is_a_yaml_null_and_rejected(tmp_path: Path) -> None:
+    """An empty table is spelled ``categories: {}``; the bare header is None, as with ``documents:``."""
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories:\n", "utf-8")
+    with pytest.raises(ValidationError, match="dict_type"):
+        load_bundle(tmp_path / "bundle.yaml")
+    (tmp_path / "bundle.yaml").write_text(BUNDLE + "categories: {}\n", "utf-8")
+    assert load_bundle(tmp_path / "bundle.yaml").categories == {}
 
 
 def test_write_json_carries_the_category_table(tmp_path: Path) -> None:
