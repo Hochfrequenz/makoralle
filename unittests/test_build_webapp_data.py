@@ -1240,3 +1240,48 @@ def test_run_exports_a_record_that_carries_no_or_the_same_formatversion(
     assert run(output_dir=out, webapp_dir=web, fv="FV2604") == 1
     index = json.loads((web / "src" / "data" / "processes.json").read_text("utf-8"))
     assert index[0]["formatversion"] == "FV2604"
+
+
+# The edition a use case was cut from, as makorele writes it since dataset v0.0.34 (makoralle 0.0.23's
+# SourceDocument): the record the webapp joins against its per-bundle document table by sha256.
+UC_SD: dict[str, Any] = {
+    "file_name": "BDEW_AWH_Netzbetreiberwechselprozesse_Strom_V1_2_20251030.pdf",
+    "date": "2025-10-30",
+    "document_version": "1.2",
+    "sha256": "0e131ab55ec635f862ea414cd7672addcc09bfb23d4d9cf4b8fa16c6968427d7",
+}
+
+
+def test_source_document_is_exported_on_index_and_detail() -> None:
+    proc = {**SAMPLE, "cross_references": {"source_documents": {"uc_sd": UC_SD}}}
+    expected = {
+        "fileName": UC_SD["file_name"],
+        "sha256": UC_SD["sha256"],
+        "documentVersion": "1.2",
+        "date": "2025-10-30",
+    }
+    assert build_index_entry(proc, has_bpmn=False, has_review=False, has_sequence=True)["sourceDocument"] == expected
+    assert build_detail(proc, review_notes=[])["sourceDocument"] == expected
+
+
+def test_source_document_without_version_emits_only_what_the_record_has() -> None:
+    # A BNetzA Lesefassung carries a file name and a hash, no version and no date; the webapp must
+    # be able to tell "known, unversioned" (keys absent) from an older dataset (no record at all).
+    lesefassung = {"file_name": "BK6-24-174_GPKE_Teil2_Lesefassung.pdf", "sha256": "ab" * 32}
+    proc = {**SAMPLE, "cross_references": {"source_documents": {"uc_sd": lesefassung}}}
+    assert build_detail(proc, review_notes=[])["sourceDocument"] == {
+        "fileName": lesefassung["file_name"],
+        "sha256": "ab" * 32,
+    }
+
+
+def test_no_source_document_means_no_key() -> None:
+    # Datasets before v0.0.34 have no `source_documents`; v0.0.34's pipeline intermediates can carry
+    # the block with `uc_sd: null`. Neither may surface as an empty object.
+    for proc in (
+        SAMPLE,
+        {**SAMPLE, "cross_references": {}},
+        {**SAMPLE, "cross_references": {"source_documents": {"uc_sd": None, "ebd": UC_SD}}},
+    ):
+        assert "sourceDocument" not in build_index_entry(proc, has_bpmn=False, has_review=False, has_sequence=True)
+        assert "sourceDocument" not in build_detail(proc, review_notes=[])

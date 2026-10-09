@@ -72,6 +72,29 @@ def _diagrams_source(process: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _source_document(process: dict[str, Any]) -> dict[str, Any] | None:
+    """The edition the use case was cut from, as the webapp reads it, or ``None``.
+
+    ``cross_references.source_documents.uc_sd`` is a :class:`~makoralle.models.source.SourceDocument`
+    (makorele writes it since dataset v0.0.34, makoralle 0.0.23). The webapp needs it to say which
+    document a process comes from (mako_prozesse#177, #176, #100): its ``version.json`` already lists
+    every document of the bundle under a key (``gpke_teil2``, ``nbw`` …) with the file's ``sha256``,
+    so the hash is what lets the app join the two without a name table here. Only the fields the
+    model has are emitted; a process without the record (every dataset before v0.0.34) gets no key at
+    all rather than an empty object, so a reader can tell "unknown" from "known, no version".
+    """
+    refs = process.get("cross_references") or {}
+    docs = refs.get("source_documents") or {}
+    uc_sd = docs.get("uc_sd") or {}
+    if not uc_sd.get("file_name"):
+        return None
+    out: dict[str, Any] = {"fileName": uc_sd["file_name"]}
+    for src, dst in (("sha256", "sha256"), ("document_version", "documentVersion"), ("date", "date")):
+        if uc_sd.get(src):
+            out[dst] = uc_sd[src]
+    return out
+
+
 def _ordered_union(lists: Iterable[list[Any] | None]) -> list[Any]:
     """Flatten an iterable of lists into a de-duplicated list, preserving order of
     first appearance (dict keys keep insertion order)."""
@@ -132,6 +155,9 @@ def build_index_entry(
     }
     if fv:
         entry["formatversion"] = fv
+    source_document = _source_document(process)
+    if source_document:
+        entry["sourceDocument"] = source_document
     return entry
 
 
@@ -314,6 +340,9 @@ def build_detail(
     }
     if fv:
         detail["formatversion"] = fv
+    source_document = _source_document(process)
+    if source_document:
+        detail["sourceDocument"] = source_document
     return detail
 
 
