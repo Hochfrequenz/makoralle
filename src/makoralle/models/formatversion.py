@@ -58,10 +58,12 @@ class Bundle(BaseModel):
 
     ``categories`` is the bundle's category table: for a document key, the category label
     (``GPKE``, ``WiM``, ``MaBiS``, ``Sonstige`` today; a plain string, as ``Process.category`` is)
-    that the processes cut from that document get. The dataset declares it per bundle
-    (dataset#74), and makorele stamps ``process.category = bundle.categories.get(doc_key, "")``
-    for the document key the use case was cut from. A document without an entry gives its
-    processes ``""``; an empty table is valid, so every existing ``bundle.yaml`` keeps validating.
+    the processes cut from that document are meant to get. The dataset declares it per bundle
+    (dataset#74); the intended reader is makorele, which is to stamp
+    ``process.category = bundle.categories.get(doc_key, "")`` for the document key the use case
+    was cut from — nothing in makoralle itself reads the table. A document without an entry
+    is meant to give its processes ``""``; an empty table is valid, so every existing
+    ``bundle.yaml`` keeps validating.
     """
 
     fv: Formatversion
@@ -72,7 +74,7 @@ class Bundle(BaseModel):
     def _categories_name_documents(self) -> Self:
         """Every key of ``categories`` must be a key of ``documents``.
 
-        makorele looks a category up by the document key the use case was cut from, so a
+        The table is looked up by the document key a use case was cut from, so a
         category under a key no document has is dead text that reaches no process — most
         likely a typo (``gpke_teil_2`` for ``gpke_teil2``) that would otherwise leave every
         process of that document with ``""`` and nothing to say why.
