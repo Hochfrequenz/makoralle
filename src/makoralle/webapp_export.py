@@ -55,6 +55,10 @@ def sd_content_hash(diagram: Mapping[str, Any]) -> str:
     label, deadline, participant, fragment or note does. ``ref_target`` is dropped from every
     step: it is derived by ref resolution, and a link override must not look like a change
     to the diagram's content. A missing field counts as empty.
+
+    Caveat: whole step, participant, fragment and note dicts are hashed. A new model field that
+    is emitted on every step (or participant, fragment, note) with a non-empty default therefore
+    re-hashes every diagram and expires all approvals; adding a top-level diagram field does not.
     """
     payload = {key: copy.deepcopy(diagram.get(key) or []) for key in ("participants", "steps", "fragments", "notes")}
     for step in payload["steps"]:
