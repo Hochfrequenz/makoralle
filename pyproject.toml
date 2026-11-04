@@ -39,7 +39,7 @@ linting = [
     "ruff==0.17.2",
 ]
 type_check = [
-    "mypy==2.4.0",
+    "mypy==2.4.1",
     "types-PyYAML==6.0.12.20260518",
     "lxml-stubs==0.5.1",
     { include-group = "tests" }
