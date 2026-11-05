@@ -204,9 +204,9 @@ def test_run_marks_approved_only_when_the_hash_matches_the_current_diagram(tmp_p
     """An approval vouches for a diagram's content, so it survives a rebuild that changes
     nothing and clears when the diagram moves.
 
-    The subject is the canonical render input rather than a `.wsd` file, which is why the
-    stamped hash comes from `diagram_content_hash`: the approve command asks the exporter
-    for the text instead of rebuilding it, so the two cannot drift apart.
+    The subject is the diagram's content hash, which is why the stamped hash comes from
+    `diagram_content_hash`: the approve command asks the exporter for the hash instead of
+    recomputing it, so the two cannot drift apart.
     """
     out = tmp_path / "output"
     web = tmp_path / "webapp"
@@ -1402,3 +1402,17 @@ def test_unapproved_diagram_has_no_stale_marker(tmp_path: pathlib.Path) -> None:
     assert diagram["approval"] is None
     assert diagram["approvalStale"] is None
     assert diagram["contentHash"] is not None
+
+
+def test_legacy_sequence_diagram_hash_covers_fragments_and_notes(tmp_path: pathlib.Path) -> None:
+    """A record with only `sequence_diagram` (no `diagrams`) must hash its fragments and notes too."""
+    out, _, pid = _single_sd_output(tmp_path)
+    base = diagram_content_hash(out, pid)
+    legacy = copy.deepcopy(SAMPLE)
+    legacy["sequence_diagram"]["fragments"] = [{"type": "opt", "branches": [{"step_nrs": [1]}]}]
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(legacy, allow_unicode=True))
+    with_fragment = diagram_content_hash(out, pid)
+    assert with_fragment != base
+    legacy["sequence_diagram"]["notes"] = [{"position": "over", "participants": ["NB"], "text": "x"}]
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(legacy, allow_unicode=True))
+    assert diagram_content_hash(out, pid) != with_fragment

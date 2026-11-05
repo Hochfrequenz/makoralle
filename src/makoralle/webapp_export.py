@@ -69,7 +69,8 @@ def sd_content_hash(diagram: Mapping[str, Any]) -> str:
 def _diagrams_source(process: dict[str, Any]) -> list[dict[str, Any]]:
     """The per-SD diagram dicts to emit: ``process['diagrams']`` when present and
     non-empty, else the legacy ``sequence_diagram`` wrapped as one unnamed diagram
-    (``slug=""``, ``name=None``), else ``[]`` when there is no SD at all.
+    (``slug=""``, ``name=None``, its fragments and notes kept so they count towards
+    :func:`sd_content_hash`), else ``[]`` when there is no SD at all.
 
     ``len(...)`` of the result doubles as the SD count: N for a multi-SD process,
     1 for a single-SD process (legacy or fallback), 0 when there is no diagram.
@@ -80,7 +81,14 @@ def _diagrams_source(process: dict[str, Any]) -> list[dict[str, Any]]:
     sd = process.get("sequence_diagram")
     if sd:
         return [
-            {"slug": "", "name": None, "participants": sd.get("participants") or [], "steps": sd.get("steps") or []}
+            {
+                "slug": "",
+                "name": None,
+                "participants": sd.get("participants") or [],
+                "steps": sd.get("steps") or [],
+                "fragments": sd.get("fragments") or [],
+                "notes": sd.get("notes") or [],
+            }
         ]
     return []
 
@@ -608,13 +616,12 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
             diagram["approval"] = approval_for(content_hash, approval_entry)
             # Stale = an approval ENTRY for a diagram that still exists but no longer
             # hashes to the stamped value (a real change, not a missing source).
-            stale = approval_entry is not None and content_hash is not None and diagram["approval"] is None
-            diagram["approvalStale"] = (
-                {"by": approval_entry.get("approved_by") or "", "at": approval_entry.get("approved_at") or ""}
-                if stale and approval_entry is not None
-                else None
-            )
-            if stale:
+            diagram["approvalStale"] = None
+            if approval_entry is not None and content_hash is not None and diagram["approval"] is None:
+                diagram["approvalStale"] = {
+                    "by": approval_entry.get("approved_by") or "",
+                    "at": approval_entry.get("approved_at") or "",
+                }
                 stale_count += 1
             d_svg = seq_svg / f"{key}.svg"
             if d_svg.exists():
