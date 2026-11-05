@@ -7,11 +7,12 @@ Library API — `run(output_dir=..., webapp_dir=..., approvals_file=...)`. The t
 
 from __future__ import annotations
 
+import copy
 import datetime
 import hashlib
 import json
 import shutil
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -34,30 +35,42 @@ def _diagram_url_prefix(fv: str | None) -> str:
 
 
 def sd_source_hash(source_text: str) -> str:
-    """SHA-256 of a diagram's canonical source — the identity an approval is tied to.
+    """SHA-256 of a diagram's canonical source text, whitespace-normalized.
 
     ``source_text`` is the canonical makrake render input
-    (:func:`~makoralle.serialization.makrake.canonical_json`). It used to be the ``.wsd``
-    DSL, which was the wrong subject twice over: the DSL dropped facts the diagram states
-    (a resolved subprocess reference has no slot in it), so a change to one could not
-    invalidate an approval; and it carried rendering directives (``# style:``) that could,
-    even though a reader would see no difference.
+    (:func:`~makoralle.serialization.makrake.canonical_json`). Line endings are normalized
+    and surrounding whitespace stripped, so cosmetic churn does not change the hash.
 
-    Still hashed as text rather than over the object, because the approve command must be
-    able to recompute it from what the build wrote without reimplementing the serializer —
-    that is what keeps the stamped hash and the build-time check from ever disagreeing.
-    Line endings are normalized and surrounding whitespace stripped so cosmetic churn does
-    not clear a badge, while any change to a step, label, deadline, participant or resolved
-    ref target does.
+    Used by the makrake input tooling.
     """
     normalized = source_text.replace("\r\n", "\n").replace("\r", "\n").strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def sd_content_hash(diagram: Mapping[str, Any]) -> str:
+    """SHA-256 over what a diagram states: participants, steps, fragments and notes.
+
+    This is the identity an approval is tied to. Title, name, slug and the process name are
+    left out, so renaming a process does not clear an approval, while any change to a step,
+    label, deadline, participant, fragment or note does. ``ref_target`` is dropped from every
+    step: it is derived by ref resolution, and a link override must not look like a change
+    to the diagram's content. A missing field counts as empty.
+
+    Caveat: whole step, participant, fragment and note dicts are hashed. A new model field that
+    is emitted on every step (or participant, fragment, note) with a non-empty default therefore
+    re-hashes every diagram and expires all approvals; adding a top-level diagram field does not.
+    """
+    payload = {key: copy.deepcopy(diagram.get(key) or []) for key in ("participants", "steps", "fragments", "notes")}
+    for step in payload["steps"]:
+        step.pop("ref_target", None)
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
 def _diagrams_source(process: dict[str, Any]) -> list[dict[str, Any]]:
     """The per-SD diagram dicts to emit: ``process['diagrams']`` when present and
     non-empty, else the legacy ``sequence_diagram`` wrapped as one unnamed diagram
-    (``slug=""``, ``name=None``), else ``[]`` when there is no SD at all.
+    (``slug=""``, ``name=None``, its fragments and notes kept so they count towards
+    :func:`sd_content_hash`), else ``[]`` when there is no SD at all.
 
     ``len(...)`` of the result doubles as the SD count: N for a multi-SD process,
     1 for a single-SD process (legacy or fallback), 0 when there is no diagram.
@@ -68,7 +81,14 @@ def _diagrams_source(process: dict[str, Any]) -> list[dict[str, Any]]:
     sd = process.get("sequence_diagram")
     if sd:
         return [
-            {"slug": "", "name": None, "participants": sd.get("participants") or [], "steps": sd.get("steps") or []}
+            {
+                "slug": "",
+                "name": None,
+                "participants": sd.get("participants") or [],
+                "steps": sd.get("steps") or [],
+                "fragments": sd.get("fragments") or [],
+                "notes": sd.get("notes") or [],
+            }
         ]
     return []
 
@@ -361,12 +381,12 @@ def load_approvals(approvals_file: Path | None) -> dict[str, Any]:
     return data.get("approvals") or {}
 
 
-def approval_for(source_text: str | None, entry: dict[str, Any] | None) -> dict[str, Any] | None:
+def approval_for(content_hash: str | None, entry: dict[str, Any] | None) -> dict[str, Any] | None:
     """The webapp-facing approval ({by, at, note}) iff `entry` was stamped against the
-    diagram's *current* canonical source; None otherwise (no entry, no source, stale hash)."""
-    if not entry or source_text is None:
+    diagram's *current* content hash; None otherwise (no entry, no hash, stale hash)."""
+    if not entry or content_hash is None:
         return None
-    if entry.get("sha256") != sd_source_hash(source_text):
+    if entry.get("sha256") != content_hash:
         return None
     return {"by": entry.get("approved_by") or "", "at": entry.get("approved_at") or "", "note": entry.get("note") or ""}
 
@@ -439,18 +459,28 @@ def load_resolved(output_dir: Path, ref_links_file: Path | None = None) -> tuple
 def diagram_source_text(output_dir: Path, key: str, ref_links_file: Path | None = None) -> str | None:
     """The canonical source text of one diagram, by artifact key — or ``None`` if unknown.
 
-    What :func:`sd_source_hash` is taken over, exposed because stamping an approval and
-    checking one at build time must never disagree: the approve command asks for the text
-    rather than rebuilding it, so there is one serializer and one resolution pass behind
-    both. That is also why it takes ``ref_links_file`` — a diagram's canonical form
-    includes its resolved ref targets, so an approval stamped without the overrides loaded
-    would be stale the moment the build applied them.
+    What :func:`sd_source_hash` is taken over. It takes ``ref_links_file`` because a
+    diagram's canonical form includes its resolved ref targets.
     """
     resolved, _ = load_resolved(output_dir, ref_links_file)
     for entry in resolved:
         for i, entry_key in enumerate(entry.keys):
             if entry_key == key:
                 return canonical_json(entry.payload(i))
+    return None
+
+
+def diagram_content_hash(output_dir: Path, key: str, ref_links_file: Path | None = None) -> str | None:
+    """:func:`sd_content_hash` of one diagram, by artifact key — or ``None`` if unknown.
+
+    What the approve tooling stamps, so the stamped hash and the build-time check come from
+    one function over one resolution pass.
+    """
+    resolved, _ = load_resolved(output_dir, ref_links_file)
+    for entry in resolved:
+        for i, entry_key in enumerate(entry.keys):
+            if entry_key == key:
+                return sd_content_hash(entry.diagrams[i])
     return None
 
 
@@ -573,21 +603,25 @@ def run(  # pylint: disable=too-many-locals,too-many-branches,too-many-statement
         # Per-SD: attach each diagram's approval and copy its .svg into the webapp. The
         # artifact key is the svg path's stem (one source of truth with build_detail).
         #
-        # An approval is now checked against the diagram's canonical render input rather
-        # than against a `.wsd` file on disk — so the check no longer depends on an
-        # intermediate artifact existing, and it covers the resolved ref targets the DSL
-        # could not express.
-        payload_by_key = {key: entry.payload(i) for i, key in enumerate(keys)}
+        # An approval is checked against the diagram's content hash (see `sd_content_hash`),
+        # so it survives a rename of the process and needs no intermediate artifact on disk.
+        diagram_by_key = dict(zip(keys, diagrams, strict=True))
         for diagram in detail["diagrams"]:
             key = Path(diagram["svg"]).stem
             consulted_keys.add(key)
-            payload = payload_by_key.get(key)
-            source_text = canonical_json(payload) if payload is not None else None
+            source = diagram_by_key.get(key)
+            content_hash = sd_content_hash(source) if source is not None else None
             approval_entry = approvals.get(key)
-            diagram["approval"] = approval_for(source_text, approval_entry)
+            diagram["contentHash"] = content_hash
+            diagram["approval"] = approval_for(content_hash, approval_entry)
             # Stale = an approval ENTRY for a diagram that still exists but no longer
             # hashes to the stamped value (a real change, not a missing source).
-            if approval_entry is not None and source_text is not None and diagram["approval"] is None:
+            diagram["approvalStale"] = None
+            if approval_entry is not None and content_hash is not None and diagram["approval"] is None:
+                diagram["approvalStale"] = {
+                    "by": approval_entry.get("approved_by") or "",
+                    "at": approval_entry.get("approved_at") or "",
+                }
                 stale_count += 1
             d_svg = seq_svg / f"{key}.svg"
             if d_svg.exists():

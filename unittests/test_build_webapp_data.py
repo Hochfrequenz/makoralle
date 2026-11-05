@@ -10,9 +10,11 @@ from makoralle.grouping import ad_artifact_key, sd_artifact_key
 from makoralle.webapp_export import (
     build_detail,
     build_index_entry,
+    diagram_content_hash,
     diagram_source_text,
     export_makrake_inputs,
     run,
+    sd_content_hash,
     sd_source_hash,
 )
 
@@ -202,9 +204,9 @@ def test_run_marks_approved_only_when_the_hash_matches_the_current_diagram(tmp_p
     """An approval vouches for a diagram's content, so it survives a rebuild that changes
     nothing and clears when the diagram moves.
 
-    The subject is the canonical render input rather than a `.wsd` file, which is why the
-    stamped hash comes from `diagram_source_text`: the approve command asks the exporter
-    for the text instead of rebuilding it, so the two cannot drift apart.
+    The subject is the diagram's content hash, which is why the stamped hash comes from
+    `diagram_content_hash`: the approve command asks the exporter for the hash instead of
+    recomputing it, so the two cannot drift apart.
     """
     out = tmp_path / "output"
     web = tmp_path / "webapp"
@@ -224,7 +226,7 @@ def test_run_marks_approved_only_when_the_hash_matches_the_current_diagram(tmp_p
     approvals = {
         "approvals": {
             ok: {
-                "sha256": sd_source_hash(diagram_source_text(out, ok) or ""),
+                "sha256": diagram_content_hash(out, ok),
                 "approved_by": "Joscha Metze <joscha@metze.eu>",
                 "approved_at": "2026-06-30",
                 "note": "",
@@ -302,6 +304,7 @@ def test_build_detail_emits_per_diagram_list_for_multi_sd() -> None:
     ]
     # the approval is attached by run(), where the filesystem is
     assert "approval" not in d0 and "approval" not in d1
+    assert "contentHash" not in d0 and "contentHash" not in d1
     assert "approval" not in d0
     # back-compat: top-level fields mirror the primary (diagrams[0])
     assert detail["steps"] == TWO_SD["diagrams"][0]["steps"]
@@ -473,7 +476,7 @@ def test_run_per_sd_partial_approval_is_not_fully_approved(tmp_path: pathlib.Pat
     approvals = {
         "approvals": {
             f"{pid}__lieferant": {
-                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__lieferant") or ""),
+                "sha256": diagram_content_hash(out, f"{pid}__lieferant"),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
@@ -508,7 +511,7 @@ def test_run_single_sd_approval_back_compat(tmp_path: pathlib.Path) -> None:
     approvals = {
         "approvals": {
             pid: {
-                "sha256": sd_source_hash(diagram_source_text(out, pid) or ""),
+                "sha256": diagram_content_hash(out, pid),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
                 "note": "ok",
@@ -540,12 +543,12 @@ def test_run_per_sd_full_approval_marks_index_approved(tmp_path: pathlib.Path) -
     approvals = {
         "approvals": {
             f"{pid}__lieferant": {
-                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__lieferant") or ""),
+                "sha256": diagram_content_hash(out, f"{pid}__lieferant"),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
             f"{pid}__netzbetreiber": {
-                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__netzbetreiber") or ""),
+                "sha256": diagram_content_hash(out, f"{pid}__netzbetreiber"),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
@@ -579,12 +582,12 @@ def test_run_per_sd_full_approval_attaches_under_a_formatversion(tmp_path: pathl
     approvals = {
         "approvals": {
             f"{pid}__lieferant": {
-                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__lieferant") or ""),
+                "sha256": diagram_content_hash(out, f"{pid}__lieferant"),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
             f"{pid}__netzbetreiber": {
-                "sha256": sd_source_hash(diagram_source_text(out, f"{pid}__netzbetreiber") or ""),
+                "sha256": diagram_content_hash(out, f"{pid}__netzbetreiber"),
                 "approved_by": "Joscha <j@x>",
                 "approved_at": "2026-06-30",
             },
@@ -1296,3 +1299,120 @@ def test_source_document_date_survives_a_yaml_loader_that_reads_dates() -> None:
     detail = build_detail(proc, review_notes=[])
     assert detail["sourceDocument"] == {"fileName": "x.pdf", "date": "2025-10-30"}
     json.dumps(detail)
+
+
+# --- content hash -----------------------------------------------------------
+
+
+def _stamp(out: pathlib.Path, tmp_path: pathlib.Path, key: str, content_hash: str | None) -> pathlib.Path:
+    af = tmp_path / "sd_approvals.yaml"
+    entry = {"sha256": content_hash, "approved_by": "Tester <t@hochfrequenz.de>", "approved_at": "2026-11-03"}
+    af.write_text(yaml.safe_dump({"approvals": {key: entry}}, allow_unicode=True), "utf-8")
+    return af
+
+
+def _single_sd_output(tmp_path: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path, str]:
+    out = tmp_path / "output"
+    pid = "abstimmung_der_netzzeitreihe"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(SAMPLE, allow_unicode=True))
+    _write(out / "sequence_svg" / f"{pid}.svg", "<svg>seq</svg>")
+    return out, tmp_path / "webapp", pid
+
+
+def _detail(web: pathlib.Path, pid: str) -> dict[str, Any]:
+    result: dict[str, Any] = json.loads((web / f"src/data/processes/{pid}.json").read_text("utf-8"))
+    return result
+
+
+def test_content_hash_ignores_title_slug_name_and_ref_target_but_not_steps() -> None:
+    d = copy.deepcopy(TWO_SD["diagrams"][0])
+    base = sd_content_hash(d)
+    assert len(base) == 64
+    renamed = {**d, "name": "anders", "slug": "x", "source_heading": "SD: y"}
+    assert sd_content_hash(renamed) == base
+    with_ref = copy.deepcopy(d)
+    with_ref["steps"][0]["ref_target"] = "/FV2510/process/a"
+    assert sd_content_hash(with_ref) == base
+    changed = copy.deepcopy(d)
+    changed["steps"][0]["label"] = (changed["steps"][0].get("label") or "") + "!"
+    assert sd_content_hash(changed) != base
+    # the hash does not mutate its input
+    assert "ref_target" in with_ref["steps"][0]
+
+
+def test_content_hash_covers_participants_fragments_and_notes() -> None:
+    d = {"participants": ["A"], "steps": [], "fragments": [], "notes": []}
+    base = sd_content_hash(d)
+    assert sd_content_hash({**d, "participants": ["A", "B"]}) != base
+    assert sd_content_hash({**d, "fragments": [{"kind": "alt"}]}) != base
+    assert sd_content_hash({**d, "notes": [{"text": "x"}]}) != base
+    # a missing field is the same as an empty one
+    assert sd_content_hash({"participants": ["A"], "steps": []}) == base
+
+
+def test_run_exports_content_hash_per_diagram(tmp_path: pathlib.Path) -> None:
+    out = tmp_path / "output"
+    web = tmp_path / "webapp"
+    _write(out / "yaml" / "wechsel.yaml", yaml.safe_dump(TWO_SD, allow_unicode=True))
+    run(output_dir=out, webapp_dir=web)
+    diagrams = _detail(web, "wechsel")["diagrams"]
+    assert len(diagrams) == 2
+    for diagram in diagrams:
+        key = pathlib.Path(diagram["svg"]).stem
+        assert diagram["contentHash"] == diagram_content_hash(out, key)
+        assert len(diagram["contentHash"]) == 64
+    assert diagrams[0]["contentHash"] != diagrams[1]["contentHash"]
+
+
+def test_run_keeps_approval_when_only_the_process_name_changes(tmp_path: pathlib.Path) -> None:
+    out, web, pid = _single_sd_output(tmp_path)
+    key_hash = diagram_content_hash(out, pid)
+    assert key_hash is not None
+    af = _stamp(out, tmp_path, pid, key_hash)
+    renamed = copy.deepcopy(SAMPLE)
+    renamed["process"]["name"] = "Ganz anderer Name"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(renamed, allow_unicode=True))
+
+    run(output_dir=out, webapp_dir=web, approvals_file=af)
+
+    diagram = _detail(web, pid)["diagrams"][0]
+    assert diagram["approval"] is not None
+    assert diagram["approvalStale"] is None
+
+
+def test_run_marks_approval_stale_when_content_changed(tmp_path: pathlib.Path) -> None:
+    out, web, pid = _single_sd_output(tmp_path)
+    af = _stamp(out, tmp_path, pid, diagram_content_hash(out, pid))
+    changed = copy.deepcopy(SAMPLE)
+    changed["sequence_diagram"]["steps"][0]["deadline"] = "Binnen 2 Tagen"
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(changed, allow_unicode=True))
+
+    run(output_dir=out, webapp_dir=web, approvals_file=af)
+
+    diagram = _detail(web, pid)["diagrams"][0]
+    assert diagram["approval"] is None
+    assert diagram["approvalStale"] == {"by": "Tester <t@hochfrequenz.de>", "at": "2026-11-03"}
+    assert diagram["contentHash"] == diagram_content_hash(out, pid)
+
+
+def test_unapproved_diagram_has_no_stale_marker(tmp_path: pathlib.Path) -> None:
+    out, web, pid = _single_sd_output(tmp_path)
+    run(output_dir=out, webapp_dir=web)
+    diagram = _detail(web, pid)["diagrams"][0]
+    assert diagram["approval"] is None
+    assert diagram["approvalStale"] is None
+    assert diagram["contentHash"] is not None
+
+
+def test_legacy_sequence_diagram_hash_covers_fragments_and_notes(tmp_path: pathlib.Path) -> None:
+    """A record with only `sequence_diagram` (no `diagrams`) must hash its fragments and notes too."""
+    out, _, pid = _single_sd_output(tmp_path)
+    base = diagram_content_hash(out, pid)
+    legacy = copy.deepcopy(SAMPLE)
+    legacy["sequence_diagram"]["fragments"] = [{"type": "opt", "branches": [{"step_nrs": [1]}]}]
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(legacy, allow_unicode=True))
+    with_fragment = diagram_content_hash(out, pid)
+    assert with_fragment != base
+    legacy["sequence_diagram"]["notes"] = [{"position": "over", "participants": ["NB"], "text": "x"}]
+    _write(out / "yaml" / f"{pid}.yaml", yaml.safe_dump(legacy, allow_unicode=True))
+    assert diagram_content_hash(out, pid) != with_fragment
