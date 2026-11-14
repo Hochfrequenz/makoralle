@@ -81,6 +81,10 @@ document. A `Bundle` (in `models.formatversion`) names, for each document key (`
 `MaBiS`, `Sonstige`) the processes cut from a document are meant to get — declared here, read by
 the parser (makorele), not by makoralle; a key there must be a document key, a document without an
 entry is meant to give its processes `""`, and the table may be empty.
+`sparten` does the same for the Sparte (`strom` or `gas`), and `sparte_overrides`, keyed by process
+id, wins over it for a process whose topic is the other Sparte than its document's;
+`bundle.sparte_for(doc_key, process_id)` is the lookup, and gives `None` rather than a guessed
+`strom`. The parser stamps the result as `Process.sparte` (since 0.3.0; `None` in older records).
 `Formatversionen` is the table of bundles: each row has a
 `gueltig_ab` (derived from efoli; a hand-written date must agree with it, and may be
 omitted), and the table names a `default`. `in_force`
