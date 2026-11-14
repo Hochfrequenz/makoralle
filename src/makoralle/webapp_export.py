@@ -20,7 +20,7 @@ import yaml
 
 from makoralle.config import require_formatversion
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
-from makoralle.ref_links import build_ref_map, load_ref_overrides, resolve_ref
+from makoralle.ref_links import RefResolver, load_ref_overrides
 from makoralle.review import ReviewItem, is_actionable, review_items
 from makoralle.serialization.makrake import canonical_json, makrake_diagram
 
@@ -433,22 +433,30 @@ def load_resolved(output_dir: Path, ref_links_file: Path | None = None) -> tuple
             continue
         loaded.append(((process.get("process") or {}).get("id") or yfile.stem, process))
 
-    ref_overrides = load_ref_overrides(ref_links_file)
-    ref_map = build_ref_map(
-        {"id": pid, "name": (p.get("process") or {}).get("name") or "", "diagrams": _diagrams_source(p)}
-        for pid, p in loaded
+    resolver = RefResolver(
+        (
+            {
+                "id": pid,
+                "name": (p.get("process") or {}).get("name") or "",
+                "sparte": (p.get("process") or {}).get("sparte"),
+                "diagrams": _diagrams_source(p),
+            }
+            for pid, p in loaded
+        ),
+        load_ref_overrides(ref_links_file),
     )
 
     resolved: list[ResolvedProcess] = []
     unresolved: set[str] = set()
     for pid, process in loaded:
         diagrams = _diagrams_source(process)
+        sparte = (process.get("process") or {}).get("sparte")
         for diagram in diagrams:
             for step in diagram.get("steps") or []:
                 ref = step.get("subprocess_ref")
                 if not ref:
                     continue
-                step["ref_target"] = resolve_ref(ref, ref_map, ref_overrides)
+                step["ref_target"] = resolver.resolve(ref, sparte)
                 if step["ref_target"] is None:
                     unresolved.add(ref)
         keys = [sd_artifact_key(pid, d.get("slug", ""), len(diagrams)) for d in diagrams]
