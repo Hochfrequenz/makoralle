@@ -1,18 +1,27 @@
 """The process-level Sparte: the model field, the bundle's tables, and the YAML round trip."""
 
+from typing import Any
+
 import pytest
 import yaml
 from pydantic import ValidationError
 
 from makoralle.models.formatversion import Bundle
 from makoralle.models.process import Process
+from makoralle.models.source import SourceDocument
 from makoralle.serialization.process_yaml import process_from_yaml, process_to_yaml
 
-DOCS = {"gpke_teil1": {"file_name": "a.pdf"}, "mmma": {"file_name": "b.pdf"}, "geli_gas": {"file_name": "c.pdf"}}
+DOCS = {
+    "gpke_teil1": SourceDocument(file_name="a.pdf"),
+    "mmma": SourceDocument(file_name="b.pdf"),
+    "geli_gas": SourceDocument(file_name="c.pdf"),
+}
 
 
-def _process(**kw: object) -> Process:
-    return Process(id="lieferbeginn", name="Lieferbeginn", source="GPKE", category="GPKE", **kw)
+def _process(sparte: Any = None) -> Process:
+    return Process.model_validate(
+        {"id": "lieferbeginn", "name": "Lieferbeginn", "source": "GPKE", "category": "GPKE", "sparte": sparte}
+    )
 
 
 def test_sparte_is_optional_and_absent_by_default() -> None:
@@ -62,9 +71,9 @@ def test_sparten_must_name_document_keys() -> None:
 
 def test_sparten_reject_unknown_values() -> None:
     with pytest.raises(ValidationError):
-        Bundle(fv="FV2604", documents=DOCS, sparten={"gpke_teil1": "Strom"})
+        Bundle.model_validate({"fv": "FV2604", "documents": DOCS, "sparten": {"gpke_teil1": "Strom"}})
     with pytest.raises(ValidationError):
-        Bundle(fv="FV2604", documents=DOCS, sparte_overrides={"x": "wasser"})
+        Bundle.model_validate({"fv": "FV2604", "documents": DOCS, "sparte_overrides": {"x": "wasser"}})
 
 
 def test_a_bare_header_is_rejected_as_for_categories() -> None:
