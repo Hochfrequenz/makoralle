@@ -136,6 +136,45 @@ def resolve_ref(
     return ref_map.get(key)
 
 
+class RefResolver:
+    """Resolve refs the way :func:`resolve_ref` does, preferring the referring process's Sparte.
+
+    GeLi Gas names its diagrams as GPKE names its own, so "Lieferende von NB an LF" is the name of
+    a Strom diagram and of a Gas one, and the corpus-wide map (keep-first) sends a ref from a Gas
+    process to the Strom target. Given the referring process's ``sparte``, each step of the lookup
+    prefers a target of that Sparte:
+
+      1. a curated override whose target process has the referring Sparte;
+      2. an exact hit among the referring Sparte's processes;
+      3. any curated override, then the corpus-wide map (what :func:`resolve_ref` does).
+
+    With ``sparte=None``, and for a corpus without the field, it is exactly :func:`resolve_ref`.
+    ``processes`` are the dicts :func:`build_ref_map` takes, each optionally carrying ``sparte``.
+    """
+
+    def __init__(self, processes: Iterable[dict[str, Any]], overrides: dict[str, dict[str, Any]]) -> None:
+        procs = list(processes)
+        self.overrides = overrides
+        self.ref_map = build_ref_map(procs)
+        self.sparte_of: dict[str, Any] = {str(p.get("id")): p.get("sparte") for p in procs}
+        spartes = {p.get("sparte") for p in procs} - {None}
+        self.maps = {sparte: build_ref_map(p for p in procs if p.get("sparte") == sparte) for sparte in spartes}
+
+    def resolve(self, subprocess_ref: str, sparte: str | None = None) -> dict[str, Any] | None:
+        """The ``{"uc", "sd"}`` target of ``subprocess_ref`` for a process of ``sparte``, or ``None``."""
+        if sparte is None:
+            return resolve_ref(subprocess_ref, self.ref_map, self.overrides)
+        key = normalize_ref(subprocess_ref or "")
+        if not key:
+            return None
+        override = self.overrides.get(key)
+        if override is not None and self.sparte_of.get(str(override.get("uc"))) == sparte:
+            return override
+        if (hit := self.maps.get(sparte, {}).get(key)) is not None:
+            return hit
+        return override if override is not None else self.ref_map.get(key)
+
+
 def ref_target_id(target: Mapping[str, Any] | Sequence[str] | None) -> str | None:
     """A resolved target as one id: ``uc__sd``, or the bare ``uc`` for the default diagram.
 
@@ -162,21 +201,26 @@ def assign_subprocess_ref_ids(processes: Iterable[Process], overrides: dict[str,
     """Set ``subprocess_ref_id`` on every step of ``processes``; return the refs that did not resolve.
 
     Resolution has to see the whole corpus at once, because a ``ref`` names another process's
-    diagram. Every step is (re)assigned, so an id a previous run wrote is cleared when its ref
+    diagram. Each step resolves through :class:`RefResolver` with its process's ``sparte``.
+    Every step is (re)assigned, so an id a previous run wrote is cleared when its ref
     no longer resolves. ``overrides`` is what :func:`load_ref_overrides` returns.
 
     The primary ``sequence_diagram`` alias is walked as well as ``diagrams``: the YAML writes
     both, and they must not disagree. The returned names are unique, in first-seen order.
     """
     procs = list(processes)
-    ref_map = build_ref_map(
-        {
-            "id": p.id,
-            "name": p.name,
-            "diagrams": [{"slug": d.slug, "name": d.name, "source_heading": d.source_heading} for d in p.diagrams]
-            or ([{"slug": "", "name": None}] if p.sequence_diagram else []),
-        }
-        for p in procs
+    resolver = RefResolver(
+        (
+            {
+                "id": p.id,
+                "name": p.name,
+                "sparte": p.sparte,
+                "diagrams": [{"slug": d.slug, "name": d.name, "source_heading": d.source_heading} for d in p.diagrams]
+                or ([{"slug": "", "name": None}] if p.sequence_diagram else []),
+            }
+            for p in procs
+        ),
+        overrides,
     )
     unresolved: dict[str, None] = {}
     for p in procs:
@@ -187,7 +231,7 @@ def assign_subprocess_ref_ids(processes: Iterable[Process], overrides: dict[str,
             if not step.subprocess_ref:
                 step.subprocess_ref_id = None
                 continue
-            step.subprocess_ref_id = ref_target_id(resolve_ref(step.subprocess_ref, ref_map, overrides))
+            step.subprocess_ref_id = ref_target_id(resolver.resolve(step.subprocess_ref, p.sparte))
             if step.subprocess_ref_id is None:
                 unresolved[step.subprocess_ref] = None
     return list(unresolved)
