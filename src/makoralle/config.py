@@ -8,7 +8,7 @@ import re
 # anywhere without a cycle.
 FORMATVERSION_PATTERN = r"^FV[0-9]{4}$"
 
-_AHB_BASE = "https://ahb-tabellen.hochfrequenz.de/ahb/"
+_AHB_BASE = "https://ahb-tabellen.hochfrequenz.app/ahb/"
 
 # Per-Prüfidentifikator deep link to the Hochfrequenz AHB tables, for records that belong to no
 # Formatversion. `current` resolves to whatever the newest published Formatversion is, so links
