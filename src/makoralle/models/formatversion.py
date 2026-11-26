@@ -13,7 +13,7 @@ import datetime
 import itertools
 import json
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 import yaml
 from efoli import EdifactFormatVersion, get_edifact_format_version_valid_from
@@ -25,6 +25,13 @@ from makoralle.models.sparte import Sparte
 
 Formatversion = Annotated[str, StringConstraints(pattern=FORMATVERSION_PATTERN)]
 CategoryLabel = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+#: The categories a process may be moved to by ``Bundle.category_overrides``. A closed list, unlike the
+#: free ``categories`` table, so a typo ("GeLi Gass") cannot silently create a new category. The
+#: canonical list lives in the web app's ``CATEGORY_ORDER`` (webapp/src/data/index.ts) and mirrors the
+#: values of the ``categories`` tables of the dataset's ``bundle.yaml`` files: a new category needs
+#: this Literal extended (and ``CATEGORY_ORDER``).
+KnownCategory = Literal["GPKE", "WiM", "MaBiS", "GeLi Gas", "WiM Gas", "Sperrprozesse Gas", "Sonstige"]
 
 
 def _efoli_gueltig_ab(fv: str) -> str:
@@ -93,7 +100,7 @@ class Bundle(BaseModel):
     fv: Formatversion
     documents: dict[str, SourceDocument]
     categories: dict[str, CategoryLabel] = Field(default_factory=dict)
-    category_overrides: dict[str, CategoryLabel] = Field(default_factory=dict)
+    category_overrides: dict[str, KnownCategory] = Field(default_factory=dict)
     sparten: dict[str, Sparte] = Field(default_factory=dict)
     sparte_overrides: dict[str, Sparte] = Field(default_factory=dict)
 

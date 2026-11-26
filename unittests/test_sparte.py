@@ -102,6 +102,12 @@ def test_category_overrides_default_empty_and_change_nothing() -> None:
     assert bundle.category_for("mmma", "x") == "GPKE"
 
 
+@pytest.mark.parametrize("bad", ["GeLi Gass", "geli gas", "GeLi  Gas", "Gas"])
+def test_category_overrides_reject_a_misspelt_label(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        Bundle.model_validate({"fv": "FV2604", "documents": DOCS, "category_overrides": {"x": bad}})
+
+
 @pytest.mark.parametrize("bad", ["", "   "])
 def test_category_overrides_reject_blank_labels_and_bare_header(bad: str) -> None:
     with pytest.raises(ValidationError):
