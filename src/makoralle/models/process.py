@@ -9,6 +9,7 @@ from pydantic import BaseModel, model_validator
 
 from makoralle.models.formatversion import Formatversion
 from makoralle.models.source import SourceDocument
+from makoralle.models.sparte import Sparte
 
 
 class DeadlineRule(BaseModel):
@@ -210,6 +211,9 @@ class Process(BaseModel):
     name: str
     source: str
     category: str
+    # strom or gas, stamped by the parser from the bundle (Bundle.sparte_for). None outside a
+    # bundle run, and in records written before 0.3.0.
+    sparte: Sparte | None = None
     # The BDEW Formatversion this process was bundled for. None outside a bundle run.
     formatversion: Formatversion | None = None
     use_case: UseCase | None = None

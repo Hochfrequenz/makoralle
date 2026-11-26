@@ -93,9 +93,9 @@ def test_pid_table_links_each_pid_to_ahb() -> None:
         allow_unicode=True,
     )
     md = yaml_to_markdown(content, has_sequence=True)
-    assert "https://ahb-tabellen.hochfrequenz.de/ahb/current/17115" in md
-    assert "[19116](https://ahb-tabellen.hochfrequenz.de/ahb/current/19116)" in md
-    assert "[19117](https://ahb-tabellen.hochfrequenz.de/ahb/current/19117)" in md
+    assert "https://ahb-tabellen.hochfrequenz.app/ahb/current/17115" in md
+    assert "[19116](https://ahb-tabellen.hochfrequenz.app/ahb/current/19116)" in md
+    assert "[19117](https://ahb-tabellen.hochfrequenz.app/ahb/current/19117)" in md
     assert "Prüfidentifikator" in md  # table present
 
 
@@ -134,9 +134,9 @@ def test_pid_table_links_follow_the_process_formatversion(formatversion: str | N
         allow_unicode=True,
     )
     md = yaml_to_markdown(content, has_sequence=True)
-    assert f"[17115](https://ahb-tabellen.hochfrequenz.de{segment}17115)" in md
-    assert f"[17116](https://ahb-tabellen.hochfrequenz.de{segment}17116)" in md
-    assert len(re.findall(r"https://ahb-tabellen\.hochfrequenz\.de/ahb/", md)) == 2  # no link escapes the pin
+    assert f"[17115](https://ahb-tabellen.hochfrequenz.app{segment}17115)" in md
+    assert f"[17116](https://ahb-tabellen.hochfrequenz.app{segment}17116)" in md
+    assert len(re.findall(r"https://ahb-tabellen\.hochfrequenz\.app/ahb/", md)) == 2  # no link escapes the pin
 
 
 def test_deadline_legend_emitted_only_when_tags_present() -> None:
