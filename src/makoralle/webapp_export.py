@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import yaml
+from efoli import get_format_of_pruefidentifikator
 
 from makoralle.config import require_formatversion
 from makoralle.grouping import ad_artifact_key, sd_artifact_key
@@ -276,6 +277,26 @@ def _pid_name_variants(mappings: list[dict[str, Any]]) -> dict[int, set[str]]:
     return variants
 
 
+#: efoli splits UTILMD by Sparte (UTILMDS/UTILMDG/UTILMDW) for PIDs; the dataset's step formats and the
+#: arrow labels only ever say "UTILMD" (the message type), so a PID row says it too. Without this
+#: ~430 rows per bundle would flip from the right "UTILMD" to a variant the arrow label next to it does not use.
+_UTILMD_VARIANTS = frozenset({"UTILMDS", "UTILMDG", "UTILMDW"})
+
+
+def _format_of_pid(pid: int, step_format: str | None) -> str | None:
+    """The message format of one Prüfidentifikator, from efoli; the step's format if efoli cannot tell.
+
+    A step can carry PIDs of several formats (``pid_refs: [17011, 35005]`` with one
+    ``format: ORDERS``, Hochfrequenz/mako_prozesse#253), so the step's format is only right for
+    some of its PIDs. Falling back to it for a PID efoli does not know keeps the old behaviour.
+    """
+    try:
+        fmt = get_format_of_pruefidentifikator(str(pid)).value
+    except ValueError:
+        return step_format
+    return "UTILMD" if fmt in _UTILMD_VARIANTS else fmt
+
+
 def _pid_table(steps: list[dict[str, Any]], names: dict[int, str] | None = None) -> list[dict[str, Any]]:
     """Per-step Prüfidentifikator rows, one per referenced PID."""
     names = names or {}
@@ -290,7 +311,7 @@ def _pid_table(steps: list[dict[str, Any]], names: dict[int, str] | None = None)
                     # can then tell "no name recorded" from "a name that is empty".
                     "name": names.get(pid),
                     "message": s.get("message"),
-                    "format": s.get("format"),
+                    "format": _format_of_pid(pid, s.get("format")),
                 }
             )
     return out
