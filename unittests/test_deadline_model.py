@@ -692,7 +692,6 @@ def test_the_308_case_split_keeps_its_bare_tag() -> None:
     [
         "Unverzüglich",
         "Unverzüglich nach Feststellung eines Fehlers im Profil bzw. Profilschar",
-        "Unverzüglich nach Ablauf des 10. WT vor Bilanzierungsmonat.",
         "Unverzüglich nach dem ÜZ von Nr. 2, sofern es sich um eine Ablehnung des Lieferscheins handelt.",
         "Unverzüglich nach dem ÜZ von Nr. 5, sofern in Nr. 2 oder Nr. 4 die Zahlung bestätigt wurde.",
     ],
@@ -756,4 +755,79 @@ def test_a_second_sentence_that_opens_with_a_condition_stays_complete() -> None:
 )
 def test_a_sentence_ending_in_a_unit_or_a_word_starts_a_second_sentence(raw: str) -> None:
     lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "partial"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Unverzüglich nach Ablauf des 10. WT vor Bilanzierungsmonat.",
+        "Unverzüglich nach Ablauf des 20. WT vor Bilanzierungsmonat.",
+        "Unverzüglich nach Ablauf des 3. Werktages nach Eingang der Meldung.",
+    ],
+)
+def test_an_unverzueglich_nach_ablauf_des_wt_is_partial(raw: str) -> None:
+    """The date bound "nach Ablauf des N. WT" has no slot in the flat rule, and the tag stays `{u}`."""
+    rule = DeadlineRule(type="unverzüglich", raw=raw)
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "partial"
+    assert deadline_tag(rule) == "{u}"
+
+
+def test_an_unverzueglich_nach_ablauf_with_the_offset_in_the_rule_stays_complete() -> None:
+    rule = DeadlineRule(
+        type="unverzüglich",
+        business_days=10,
+        direction="vor",
+        anchor="Bilanzierungsmonat",
+        raw="Unverzüglich nach Ablauf des 10. WT vor Bilanzierungsmonat.",
+    )
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Unverzüglich nach Eingang der Meldung.",
+        "Unverzüglich nach dem ÜZ von Nr. 1.",
+        "Unverzüglich nach Ablauf der Widerspruchsfrist.",
+        "Unverzüglich nach Eingang der Meldung innerhalb des Marktgebiets.",
+    ],
+)
+def test_an_unverzueglich_nach_a_trigger_stays_complete(raw: str) -> None:
+    """Only the "Ablauf des N. WT" date bound is drawn; a bare trigger is what `{u}` already says."""
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Spätester ÜT ist zum angegebenen Zahlungsziel.",
+        "Spätester ÜT ist zum Zahlungsziel in der Rechnung.",
+        "Spätester ÜT ist bis zum Zahlungsziel.",
+        "Spätestens zum Zahlungsziel in der Rechnung einer sonstigen Leistung.",
+    ],
+)
+def test_a_terminiert_that_only_says_zahlungsziel_is_complete(raw: str) -> None:
+    """mako_prozesse#314: the note would repeat the `{≤Zahlungsziel}` tag word for word."""
+    rule = DeadlineRule(type="terminiert", anchor="Zahlungsziel", raw=raw)
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "complete"
+    assert deadline_tag(rule) == "{≤Zahlungsziel}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Spätester ÜT ist zum Zahlungsziel in der Rechnung, jedoch frühestens 3 WT nach Eingang.",
+        "Spätester ÜT ist zum Zahlungsziel. Bei Zahlungsablehnung 2 WT früher.",
+        "Spätester ÜT ist zum Zahlungsziel, sofern die Rechnung vorliegt.",
+        "Spätester ÜT ist der 2. WT vor dem Zahlungsziel in der Rechnung.",
+    ],
+)
+def test_a_terminiert_zahlungsziel_with_more_content_stays_partial(raw: str) -> None:
+    rule = DeadlineRule(type="terminiert", anchor="Zahlungsziel", raw=raw)
+    lifted = deadline_from_rule(rule)
     assert lifted is not None and lifted.coverage == "partial"
