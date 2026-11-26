@@ -655,3 +655,105 @@ def test_the_tag_is_unchanged_by_the_widened_coverage() -> None:
         type="unverzüglich", raw="Unverzüglich, spätestens am folgenden WT nach Erhalt der Anforderung."
     )
     assert deadline_tag(rule) == "{u}"
+
+
+_CASE_SPLIT_308 = (
+    "a) Bei Zuordnung eines neuen LF oder Ersteinbau mME oder iMS und fehlendem Angebot vom MSB der "
+    "Marktlokation: frühester ÜT ist der 9. WT. b) Im lfd. Betrieb An-/Abmeldung: unverzüglich bei "
+    "Veränderung des Liefervertrages mit dem AN bzgl. des „all inclusive“ Entgelts des Messstellenbetriebes."
+)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # mako_prozesse#308 (FV2610, WiM, step 1): "unverzüglich" is only case b).
+        _CASE_SPLIT_308,
+        "Unverzüglich, jedoch frühester ÜZ ist nach ausdrücklicher oder aufgrund Fristablaufs erteilter Genehmigung.",
+        "Unverzüglich nach Vorliegen des Anmeldegrundes. Bei Anmeldungen anlässlich eines Lieferantenwechsels "
+        "mindestens 10 WT vor Aufnahme der Belieferung.",
+        "1 WT nach Erhalt der Einzelanforderung sowie bei Abonnement unverzüglich nach Übermittlung der LF-SZR.",
+        "Unverzüglich nach dem ÜZ von Nr. 2, sofern es sich um eine Zustimmung handelt, bzw. nach dem ÜZ von "
+        "Nr. 3, jedoch spätester ÜZ ist 07:00 Uhr des 1. WT nach dem ÜT von Nr. 1.",
+    ],
+)
+def test_an_unverzueglich_with_a_second_timing_clause_is_partial(raw: str) -> None:
+    """The tag cannot hold a case split or a lower bound, so the sentence says more than it."""
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "partial"
+
+
+def test_the_308_case_split_keeps_its_bare_tag() -> None:
+    assert deadline_tag(DeadlineRule(type="unverzüglich", raw=_CASE_SPLIT_308)) == "{u}"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Unverzüglich",
+        "Unverzüglich nach Feststellung eines Fehlers im Profil bzw. Profilschar",
+        "Unverzüglich nach Ablauf des 10. WT vor Bilanzierungsmonat.",
+        "Unverzüglich nach dem ÜZ von Nr. 2, sofern es sich um eine Ablehnung des Lieferscheins handelt.",
+        "Unverzüglich nach dem ÜZ von Nr. 5, sofern in Nr. 2 oder Nr. 4 die Zahlung bestätigt wurde.",
+    ],
+)
+def test_a_single_clause_unverzueglich_stays_complete(raw: str) -> None:
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+def test_an_unverzueglich_with_a_bound_in_its_tag_stays_complete_despite_the_second_pattern() -> None:
+    """`{u ≤5WT nach ÜT#1}`: "10. WT"-style stops and "Nr. 1" must not read as a second sentence."""
+    rule = DeadlineRule(
+        type="unverzüglich",
+        business_days=5,
+        reference_step=1,
+        reference_event="ÜT",
+        raw="Unverzüglich, jedoch spätester ÜT ist der 5. WT nach dem ÜT von Nr. 1.",
+    )
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "complete"
+    assert deadline_tag(rule) == "{u ≤5WT nach ÜT#1}"
+
+
+def test_a_terminiert_with_a_second_sentence_is_not_read_by_the_unverzueglich_patterns() -> None:
+    rule = DeadlineRule(type="terminiert", anchor="Zahlungsziel", raw="Spätestens zum Zahlungsziel. Mindestens 3 WT.")
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Unverzüglich nach Kenntnisnahme, ggf. Verzögerungen sind zu melden.",
+        "Unverzüglich nach Kenntnisnahme, vgl. Nr. 3.",
+        "Unverzüglich nach Kenntnisnahme, vgl. Anlage 2.",
+        "Unverzüglich nach Kenntnisnahme von Fehlern etc. Die Meldung erfolgt separat",
+        "Unverzüglich nach Kenntnisnahme von Fehlern usw. Bei Bedarf",
+        "Unverzüglich nach Kenntnisnahme inkl. Wochenenden",
+        "Unverzüglich nach Kenntnisnahme gem. Abs. 3 der Regelung",
+        "Unverzüglich nach Kenntnisnahme, max. Fristen sind einzuhalten",
+    ],
+)
+def test_an_abbreviation_before_a_capital_is_not_a_second_sentence(raw: str) -> None:
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+def test_a_second_sentence_that_opens_with_a_condition_stays_complete() -> None:
+    """A condition scopes whether the step happens; it is not a second timing clause."""
+    raw = "Unverzüglich nach Kenntnisnahme. Sofern nichts anderes gilt."
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Unverzüglich nach Kenntnisnahme innerhalb von 5 WT. Bei Fehlern zusätzlich eine Meldung.",
+        "Unverzüglich nach Vorliegen des Grundes. Bei Stilllegung gilt der Abmeldetermin.",
+    ],
+)
+def test_a_sentence_ending_in_a_unit_or_a_word_starts_a_second_sentence(raw: str) -> None:
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "partial"
