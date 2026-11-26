@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from makoralle.config import FORMATVERSION_PATTERN
 from makoralle.models.source import IsoDate, SourceDocument
+from makoralle.models.sparte import Sparte
 
 Formatversion = Annotated[str, StringConstraints(pattern=FORMATVERSION_PATTERN)]
 CategoryLabel = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -68,11 +69,29 @@ class Bundle(BaseModel):
     there to end survive. An empty table is valid, so every existing ``bundle.yaml`` keeps
     validating; it is spelled ``categories: {}`` — a bare ``categories:`` header is a YAML null
     and is rejected, as a bare ``documents:`` is.
+
+    ``sparten`` does the same for the Sparte (``strom``/``gas``): document key -> the Sparte of
+    the processes cut from that document. ``sparte_overrides`` is keyed by process id and wins
+    over the document's entry, for a process whose topic is the other Sparte than its document
+    (the MMMA guide is a Strom document, but its three Allokationsliste Gas processes are Gas).
+    :meth:`sparte_for` is the lookup makorele stamps ``Process.sparte`` with. Both tables may be
+    empty, so every existing ``bundle.yaml`` keeps validating; a document without an entry gives
+    ``None``, never a guessed ``strom`` — whether every process must have one is the dataset's
+    gate to decide, not a default here.
     """
 
     fv: Formatversion
     documents: dict[str, SourceDocument]
     categories: dict[str, CategoryLabel] = Field(default_factory=dict)
+    sparten: dict[str, Sparte] = Field(default_factory=dict)
+    sparte_overrides: dict[str, Sparte] = Field(default_factory=dict)
+
+    def sparte_for(self, doc_key: str | None, process_id: str) -> Sparte | None:
+        """The Sparte of process ``process_id`` cut from document ``doc_key``: its override, else
+        its document's entry, else ``None``."""
+        if process_id in self.sparte_overrides:
+            return self.sparte_overrides[process_id]
+        return self.sparten.get(doc_key) if doc_key is not None else None
 
     @model_validator(mode="after")
     def _categories_name_documents(self) -> Self:
@@ -87,6 +106,18 @@ class Bundle(BaseModel):
         if unknown:
             raise ValueError(
                 f"categories name document keys the bundle does not have: {unknown}; "
+                f"its documents are {sorted(self.documents)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _sparten_name_documents(self) -> Self:
+        """Every key of ``sparten`` must be a key of ``documents``, for the reason
+        :meth:`_categories_name_documents` gives."""
+        unknown = sorted(set(self.sparten) - set(self.documents))
+        if unknown:
+            raise ValueError(
+                f"sparten name document keys the bundle does not have: {unknown}; "
                 f"its documents are {sorted(self.documents)}"
             )
         return self
