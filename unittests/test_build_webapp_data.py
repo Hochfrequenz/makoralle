@@ -130,7 +130,8 @@ def _detail_pids(step: dict[str, Any]) -> list[dict[str, Any]]:
         "use_case": {},
         "sequence_diagram": {"participants": ["A", "B"], "steps": [{"nr": 1, "sender": "A", "receiver": "B", **step}]},
     }
-    return build_detail(proc, review_notes=[])["pids"]
+    pids: list[dict[str, Any]] = build_detail(proc, review_notes=[])["pids"]
+    return pids
 
 
 def test_pid_table_takes_each_pids_own_format_not_the_steps() -> None:
