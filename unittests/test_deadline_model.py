@@ -720,3 +720,40 @@ def test_a_terminiert_with_a_second_sentence_is_not_read_by_the_unverzueglich_pa
     rule = DeadlineRule(type="terminiert", anchor="Zahlungsziel", raw="Spätestens zum Zahlungsziel. Mindestens 3 WT.")
     lifted = deadline_from_rule(rule)
     assert lifted is not None and lifted.coverage == "complete"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Unverzüglich nach Kenntnisnahme, ggf. Verzögerungen sind zu melden.",
+        "Unverzüglich nach Kenntnisnahme, vgl. Nr. 3.",
+        "Unverzüglich nach Kenntnisnahme, vgl. Anlage 2.",
+        "Unverzüglich nach Kenntnisnahme von Fehlern etc. Die Meldung erfolgt separat",
+        "Unverzüglich nach Kenntnisnahme von Fehlern usw. Bei Bedarf",
+        "Unverzüglich nach Kenntnisnahme inkl. Wochenenden",
+        "Unverzüglich nach Kenntnisnahme gem. Abs. 3 der Regelung",
+        "Unverzüglich nach Kenntnisnahme, max. Fristen sind einzuhalten",
+    ],
+)
+def test_an_abbreviation_before_a_capital_is_not_a_second_sentence(raw: str) -> None:
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+def test_a_second_sentence_that_opens_with_a_condition_stays_complete() -> None:
+    """A condition scopes whether the step happens; it is not a second timing clause."""
+    raw = "Unverzüglich nach Kenntnisnahme. Sofern nichts anderes gilt."
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Unverzüglich nach Kenntnisnahme innerhalb von 5 WT. Bei Fehlern zusätzlich eine Meldung.",
+        "Unverzüglich nach Vorliegen des Grundes. Bei Stilllegung gilt der Abmeldetermin.",
+    ],
+)
+def test_a_sentence_ending_in_a_unit_or_a_word_starts_a_second_sentence(raw: str) -> None:
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "partial"

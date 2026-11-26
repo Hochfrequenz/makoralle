@@ -297,18 +297,28 @@ _LATEST_BOUND = re.compile(r"\bsp[äa]test(?:ens|er)\b", re.I)
 #: * a bound from BELOW — "frühester ÜT ist der 9. WT", "mindestens 20 WT vor …": the rule only
 #:   has bounds from above (``business_days``/``latest_time`` are "spätestens");
 #: * "a) … b) …" enumerated alternatives;
-#: * a second SENTENCE ("… Bei Anmeldungen … mindestens 10 WT …"). The lookbehind wants a word of
-#:   three lowercase letters before the stop, so "10. WT", "Nr. 2" and "ggf. 4." do not count,
-#:   and "bzw." is excluded ("im Profil bzw. Profilschar");
+#: * a second SENTENCE ("… Bei Anmeldungen … mindestens 10 WT …"), see ``_SECOND_SENTENCE``;
 #: * a later clause (after "sowie", "bzw.", ":", ";" or a bullet) that says "unverzüglich" again;
 #: * "bzw. nach …" between two anchors ("nach dem ÜZ von Nr. 2 … bzw. nach dem ÜZ von Nr. 3").
 #:
 #: Not read, on purpose: a trailing "sofern/wenn …" (it scopes whether the step happens, and the
 #: tag already carries its timing), "oder" and a bare "bzw." ("Profil bzw. Profilschar").
+_ABBREVIATIONS = (
+    "bzw", "ggf", "vgl", "etc", "usw", "inkl", "exkl", "evtl", "max", "min", "sog", "gem", "bzgl", "zzgl", "abzgl",
+)  # fmt: skip
+#: A sentence stops after a word of three lowercase letters ("… handelt. Bei"), or after an
+#: uppercase unit ("… 5 WT. Bei"), unless the word is an abbreviation a German noun can follow
+#: ("ggf. Verzögerungen", "vgl. Anlage 2", "inkl. Wochenenden"). "10. WT", "Nr. 2" and "ggf. 4."
+#: never match: no capital follows. A second sentence that opens with a condition ("Sofern nichts
+#: anderes gilt.") scopes the step and is not read, as with a trailing "sofern" (see above).
+_SECOND_SENTENCE = re.compile(
+    "".join(f"(?<!{a})" for a in _ABBREVIATIONS)
+    + r"(?:(?<=[a-zäöüß]{3})|(?<=WT|KT|ÜT|ÜZ))[.!?]\s+(?!(?:Sofern|Wenn|Falls|Soweit)\b)[A-ZÄÖÜ]"
+)
 _SECOND_CLAUSE: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bfrühest(?:er|ens)\b|\bmindestens\s+\d+", re.I), "a lower bound, which the rule cannot hold"),
     (re.compile(r"(?:^|\s)a\)\s.*\sb\)\s", re.S), 'enumerated alternatives "a) … b) …"'),
-    (re.compile(r"(?<!bzw)(?<=[a-zäöüß]{3})[.!?]\s+[A-ZÄÖÜ]"), "a second sentence, which the rule cannot hold"),
+    (_SECOND_SENTENCE, "a second sentence, which the rule cannot hold"),
     (
         re.compile(r"(?:\bsowie\b|\bbzw\.|[:;•])[^.]{0,60}?\bunverzüglich\b", re.I),
         "a second clause that again says unverzüglich",
