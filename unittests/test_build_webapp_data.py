@@ -124,6 +124,58 @@ def test_build_detail_pid_table_flattens_one_row_per_ref() -> None:
     ]
 
 
+def _detail_pids(step: dict[str, Any]) -> list[dict[str, Any]]:
+    proc = {
+        "process": {"id": "x", "name": "X", "category": "WiM", "source": ""},
+        "use_case": {},
+        "sequence_diagram": {"participants": ["A", "B"], "steps": [{"nr": 1, "sender": "A", "receiver": "B", **step}]},
+    }
+    return build_detail(proc, review_notes=[])["pids"]
+
+
+def test_pid_table_takes_each_pids_own_format_not_the_steps() -> None:
+    """Hochfrequenz/mako_prozesse#253: one step, PIDs of three formats, one step format."""
+    rows = _detail_pids({"format": "ORDERS", "pid_refs": [17011, 35005]})
+    assert [(r["pid"], r["format"]) for r in rows] == [(17011, "ORDERS"), (35005, "REQOTE")]
+    rows = _detail_pids({"format": "ORDRSP", "pid_refs": [19001, 15005, 21033]})
+    assert [(r["pid"], r["format"]) for r in rows] == [(19001, "ORDRSP"), (15005, "QUOTES"), (21033, "IFTSTA")]
+
+
+def test_pid_table_leaves_the_step_untouched() -> None:
+    proc = {
+        "process": {"id": "x", "name": "X", "category": "WiM", "source": ""},
+        "use_case": {},
+        "sequence_diagram": {
+            "participants": ["A", "B"],
+            "steps": [{"nr": 1, "sender": "A", "receiver": "B", "format": "ORDERS", "pid_refs": [17011, 35005]}],
+        },
+    }
+    step = build_detail(proc, review_notes=[])["steps"][0]
+    assert step["format"] == "ORDERS"
+    assert step["pid_refs"] == [17011, 35005]
+
+
+@pytest.mark.parametrize(
+    ("pid", "expected"),
+    [
+        (55001, "UTILMD"),  # efoli: UTILMDS
+        (44139, "UTILMD"),  # efoli: UTILMDG
+        (13002, "MSCONS"),
+        (27003, "PRICAT"),
+        (25001, "UTILTS"),
+    ],
+)
+def test_pid_table_format_of_other_pids(pid: int, expected: str) -> None:
+    assert _detail_pids({"format": "UTILMD", "pid_refs": [pid]})[0]["format"] == expected
+
+
+@pytest.mark.parametrize("step_format", ["UTILMD", None])
+def test_pid_table_keeps_step_format_for_a_pid_efoli_does_not_know(step_format: str | None) -> None:
+    # 70095 has no format prefix in efoli (it raises ValueError); real data: FV2510-FV2610, one row each
+    rows = _detail_pids({"format": step_format, "pid_refs": [70095, 55001]})
+    assert [r["format"] for r in rows] == [step_format, "UTILMD"]
+
+
 def test_sd_source_hash_ignores_whitespace_churn_but_not_content() -> None:
     """The hash is taken over a diagram's canonical render input; the function itself only
     cares that cosmetic churn does not clear a badge while a content change does."""
@@ -294,13 +346,13 @@ def test_build_detail_emits_per_diagram_list_for_multi_sd() -> None:
     assert d0["svg"] == "/diagrams/sequence/wechsel__lieferant.svg"
     # per-diagram deadline/pid tables derive from THAT diagram's steps
     assert d0["deadlines"] == [{"nr": 1, "deadline": "Unverzüglich", "rule": None}]
-    assert d0["pids"] == [{"nr": 1, "pid": 11001, "name": None, "message": None, "format": None}]
+    assert d0["pids"] == [{"nr": 1, "pid": 11001, "name": None, "message": None, "format": "UTILMD"}]
     assert d1["slug"] == "netzbetreiber"
     assert d1["svg"] == "/diagrams/sequence/wechsel__netzbetreiber.svg"
     assert d1["deadlines"] == []
     assert d1["pids"] == [
-        {"nr": 1, "pid": 11002, "name": None, "message": None, "format": None},
-        {"nr": 1, "pid": 11003, "name": None, "message": None, "format": None},
+        {"nr": 1, "pid": 11002, "name": None, "message": None, "format": "UTILMD"},
+        {"nr": 1, "pid": 11003, "name": None, "message": None, "format": "UTILMD"},
     ]
     # the approval is attached by run(), where the filesystem is
     assert "approval" not in d0 and "approval" not in d1
@@ -350,8 +402,8 @@ def test_run_emits_per_sd_diagrams_and_copies_all_svgs(tmp_path: pathlib.Path) -
     # per-diagram deadlines/pids reflect each diagram's own steps
     assert d0["deadlines"] == [{"nr": 1, "deadline": "Unverzüglich", "rule": None}]
     assert d1["pids"] == [
-        {"nr": 1, "pid": 11002, "name": None, "message": None, "format": None},
-        {"nr": 1, "pid": 11003, "name": None, "message": None, "format": None},
+        {"nr": 1, "pid": 11002, "name": None, "message": None, "format": "UTILMD"},
+        {"nr": 1, "pid": 11003, "name": None, "message": None, "format": "UTILMD"},
     ]
     # both per-SD svgs copied into the webapp
     seq_dest = web / "public/diagrams/sequence"
@@ -831,12 +883,12 @@ def test_a_pid_with_no_row_in_the_list_reports_no_name_rather_than_an_empty_one(
     detail = build_detail(
         {
             "process": {"id": "p"},
-            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [99999]}]},
+            "sequence_diagram": {"steps": [{"nr": 1, "message": "m", "pid_refs": [70095]}]},
             "pid_mappings": [{"prüfidentifikator": "55001", "anwendungsfall": "Anmeldung"}],
         },
         review_notes=[],
     )
-    assert detail["pids"] == [{"nr": 1, "pid": 99999, "name": None, "message": "m", "format": None}]
+    assert detail["pids"] == [{"nr": 1, "pid": 70095, "name": None, "message": "m", "format": None}]
 
 
 def test_a_pid_whose_rows_disagree_keeps_the_first_spelling() -> None:
