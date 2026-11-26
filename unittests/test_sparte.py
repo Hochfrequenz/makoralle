@@ -79,3 +79,44 @@ def test_sparten_reject_unknown_values() -> None:
 def test_a_bare_header_is_rejected_as_for_categories() -> None:
     with pytest.raises(ValidationError):
         Bundle.model_validate({"fv": "FV2604", "documents": DOCS, "sparten": None})
+
+
+def test_category_for_reads_the_document_then_lets_the_override_win() -> None:
+    bundle = Bundle(
+        fv="FV2510",
+        documents=DOCS,
+        categories={"mmma": "GPKE", "gpke_teil1": "GPKE"},
+        category_overrides={"abonnieren_der_marktlokationsscharfen_allokationsliste_gas": "GeLi Gas"},
+    )
+    assert bundle.category_for("mmma", "lieferbeginn") == "GPKE"
+    # The label need not be a row of the table (FV2510 has no GeLi Gas document).
+    assert bundle.category_for("mmma", "abonnieren_der_marktlokationsscharfen_allokationsliste_gas") == "GeLi Gas"
+    assert bundle.category_for(None, "abonnieren_der_marktlokationsscharfen_allokationsliste_gas") == "GeLi Gas"
+    assert bundle.category_for(None, "lieferbeginn") == ""
+    assert bundle.category_for("geli_gas", "lieferbeginn") == ""
+
+
+def test_category_overrides_default_empty_and_change_nothing() -> None:
+    bundle = Bundle(fv="FV2604", documents=DOCS, categories={"mmma": "GPKE"})
+    assert bundle.category_overrides == {}
+    assert bundle.category_for("mmma", "x") == "GPKE"
+
+
+@pytest.mark.parametrize("bad", ["GeLi Gass", "geli gas", "GeLi  Gas", "Gas"])
+def test_category_overrides_reject_a_misspelt_label(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        Bundle.model_validate({"fv": "FV2604", "documents": DOCS, "category_overrides": {"x": bad}})
+
+
+@pytest.mark.parametrize("bad", ["", "   "])
+def test_category_overrides_reject_blank_labels_and_bare_header(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        Bundle.model_validate({"fv": "FV2604", "documents": DOCS, "category_overrides": {"x": bad}})
+    with pytest.raises(ValidationError):
+        Bundle.model_validate({"fv": "FV2604", "documents": DOCS, "category_overrides": None})
+
+
+def test_category_overrides_round_trip_through_yaml() -> None:
+    bundle = Bundle(fv="FV2604", documents=DOCS, category_overrides={"übermittlung_x": "GeLi Gas"})
+    text = yaml.safe_dump(bundle.model_dump(mode="json"), allow_unicode=True)
+    assert Bundle.model_validate(yaml.safe_load(text)) == bundle

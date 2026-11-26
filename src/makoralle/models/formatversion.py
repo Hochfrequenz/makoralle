@@ -13,7 +13,7 @@ import datetime
 import itertools
 import json
 from pathlib import Path
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 import yaml
 from efoli import EdifactFormatVersion, get_edifact_format_version_valid_from
@@ -25,6 +25,13 @@ from makoralle.models.sparte import Sparte
 
 Formatversion = Annotated[str, StringConstraints(pattern=FORMATVERSION_PATTERN)]
 CategoryLabel = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+#: The categories a process may be moved to by ``Bundle.category_overrides``. A closed list, unlike the
+#: free ``categories`` table, so a typo ("GeLi Gass") cannot silently create a new category. The
+#: canonical list lives in the web app's ``CATEGORY_ORDER`` (webapp/src/data/index.ts) and mirrors the
+#: values of the ``categories`` tables of the dataset's ``bundle.yaml`` files: a new category needs
+#: this Literal extended (and ``CATEGORY_ORDER``).
+KnownCategory = Literal["GPKE", "WiM", "MaBiS", "GeLi Gas", "WiM Gas", "Sperrprozesse Gas", "Sonstige"]
 
 
 def _efoli_gueltig_ab(fv: str) -> str:
@@ -70,6 +77,16 @@ class Bundle(BaseModel):
     validating; it is spelled ``categories: {}`` — a bare ``categories:`` header is a YAML null
     and is rejected, as a bare ``documents:`` is.
 
+    ``category_overrides`` is keyed by process id and wins over the document's row, for a process
+    that is listed under another category than its source document gives it (the MMMA guide is
+    ``GPKE``, but its three Allokationsliste Gas processes are listed under ``GeLi Gas``,
+    machine-readable_mako-prozesse#125). Its labels are free ``CategoryLabel`` strings, like
+    the table's, and are *not* required to occur in ``categories``: a bundle without Gas
+    documents (FV2510) has no ``GeLi Gas`` row and still needs the exception.
+    :meth:`category_for` is the lookup makorele stamps ``Process.category`` with and the dataset
+    gate compares against. Like ``sparte_overrides`` it may be empty (the default), and an id no
+    process has is not detectable here — that is the dataset gate's business.
+
     ``sparten`` does the same for the Sparte (``strom``/``gas``): document key -> the Sparte of
     the processes cut from that document. ``sparte_overrides`` is keyed by process id and wins
     over the document's entry, for a process whose topic is the other Sparte than its document
@@ -83,8 +100,16 @@ class Bundle(BaseModel):
     fv: Formatversion
     documents: dict[str, SourceDocument]
     categories: dict[str, CategoryLabel] = Field(default_factory=dict)
+    category_overrides: dict[str, KnownCategory] = Field(default_factory=dict)
     sparten: dict[str, Sparte] = Field(default_factory=dict)
     sparte_overrides: dict[str, Sparte] = Field(default_factory=dict)
+
+    def category_for(self, doc_key: str | None, process_id: str) -> str:
+        """The category of process ``process_id`` cut from document ``doc_key``: its override, else
+        its document's row, else ``""``."""
+        if process_id in self.category_overrides:
+            return self.category_overrides[process_id]
+        return self.categories.get(doc_key, "") if doc_key is not None else ""
 
     def sparte_for(self, doc_key: str | None, process_id: str) -> Sparte | None:
         """The Sparte of process ``process_id`` cut from document ``doc_key``: its override, else
