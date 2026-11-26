@@ -325,6 +325,18 @@ _SECOND_CLAUSE: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (re.compile(r"\bbzw\.\s+nach\b", re.I), '"bzw. nach …": a second anchor'),
 )
+#: "Unverzüglich nach Ablauf des 10. WT vor Bilanzierungsmonat": a date bound, spelled as a trigger.
+#: Only this shape — the ~280 other "unverzüglich nach <trigger>" wordings say nothing the tag lacks.
+#: Read only for ``unverzüglich`` with no offset in the rule (mako_prozesse, six steps at v0.0.49).
+_ABLAUF_WT_BOUND = re.compile(r"^\s*unverzüglich[,\s]+nach\s+Ablauf\s+des\s+\d+\.\s*(?:WT|Werktag(?:e|es|s)?)\b", re.I)
+#: A ``terminiert`` wording that is nothing but the tag ``{≤Zahlungsziel}`` spelled out
+#: (mako_prozesse#314): "Spätester ÜT ist zum angegebenen Zahlungsziel.", "Spätestens zum Zahlungsziel in
+#: der Rechnung." Anything more — a number, a second clause, a condition — does not match.
+_ONLY_ZAHLUNGSZIEL = re.compile(
+    r"^\s*(?:Spätester\s+(?:ÜT|ÜZ)\s+ist|Spätestens)\s+(?:bis\s+)?zum\s+(?:angegebenen\s+)?Zahlungsziel"
+    r"(?:\s+in\s+der\s+(?:Rechnung(?:\s+einer\s+sonstigen\s+Leistung)?|Netznutzungsabrechnung))?\s*\.?\s*$",
+    re.I,
+)
 #: Two or more alternatives selected by a condition, which the flat rule cannot hold.
 _CONDITIONAL = re.compile(r"(?:•.{0,400}•)|\bAnsonsten\b|\bI\.\)|\bII\.\)|Sofern\b.{0,80}\bgilt\s*:", re.S)
 #: "der 1. WT nach dem ÜT von Nr. 3 bzw. 4" — ``reference_step`` holds one step.
@@ -382,15 +394,23 @@ def _loss_in(raw: str, alternative: DeadlineAlternative) -> str | None:
     for pattern, why in _LOSS_PATTERNS:
         if pattern.search(raw):
             return why
-    if _BACKSTOP.search(raw):
-        backstop = alternative.backstop
+    backstop = alternative.backstop
+    only_zahlungsziel = (
+        alternative.kind == "scheduled"
+        and backstop is not None
+        and backstop.anchor.name == "Zahlungsziel"
+        and backstop.offset is None
+        and backstop.latest_time is None
+        and _ONLY_ZAHLUNGSZIEL.match(raw) is not None
+    )  # the tag `{≤Zahlungsziel}` says all of it (mako_prozesse#314)
+    if _BACKSTOP.search(raw) and not only_zahlungsziel:
         if backstop is None or (backstop.offset is None and backstop.latest_time is None):
             return "a hard date stated in prose and nowhere else"
     # Wordings `_BACKSTOP` does not name: "spätestens jedoch 1 WT nach …", "spätestens am
     # folgenden WT …", "spätestens bis zum Ablauf des 10. WT …". An `unverzüglich` whose flat
     # fields hold no offset and no clock draws a bare `{u}`, so the bound exists only in `raw`.
     # A rule whose tag already shows a bound (offset or clock) is not touched.
-    if alternative.kind == "immediate" and _LATEST_BOUND.search(raw):
+    if alternative.kind == "immediate" and (_LATEST_BOUND.search(raw) or _ABLAUF_WT_BOUND.match(raw)):
         backstop = alternative.backstop
         if backstop is None or (backstop.offset is None and backstop.latest_time is None):
             return "a latest date stated in prose that the tag does not show"
