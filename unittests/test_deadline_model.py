@@ -18,6 +18,7 @@ from makoralle.models.deadline import (
     deadline_from_rule,
 )
 from makoralle.models.process import DeadlineRule
+from makoralle.notation import deadline_tag
 
 
 def test_no_frist_lifts_to_none_not_to_an_empty_deadline() -> None:
@@ -606,3 +607,51 @@ def test_coverage_defaults_to_partial_rather_than_complete() -> None:
     a consumer act on the structure, so a caller has to say it deliberately.
     """
     assert Deadline(alternatives=[DeadlineAlternative(kind="immediate")], raw="x").coverage == "partial"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # mako_prozesse#302 / makorele#101: the sentence that rendered a bare `{u}`.
+        "Unverzüglich, spätestens am folgenden WT nach Erhalt der Anforderung.",
+        "Unverzüglich, spätestens jedoch 1 WT nach Erhalt der Aktivierung.",
+        "Unverzüglich, spätestens jedoch bis zum Ablauf des 10. WT nach Eingang der Nachricht des NB",
+        "Unverzüglich, spätestens 1 WT nach Verpflichtungsanfrage",
+    ],
+)
+def test_an_unverzueglich_whose_bound_only_the_prose_holds_is_partial(raw: str) -> None:
+    """The tag is `{u}` — no offset, no clock — so "spätestens …" is written nowhere else."""
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw=raw))
+    assert lifted is not None and lifted.coverage == "partial"
+
+
+def test_an_unverzueglich_whose_tag_already_shows_the_bound_stays_complete() -> None:
+    """`{u ≤2WT nach ÜT#1}`: the offset is in the structure, so a note would repeat the arrow."""
+    rule = DeadlineRule(
+        type="unverzüglich",
+        business_days=2,
+        reference_step=1,
+        reference_event="ÜT",
+        raw="Unverzüglich, spätestens 2 WT nach dem ÜT von Nr. 1.",
+    )
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+def test_a_terminiert_zahlungsziel_stays_complete() -> None:
+    """`{≤Zahlungsziel}` IS the bound; widening the backstop to `terminiert` would flip these."""
+    rule = DeadlineRule(type="terminiert", anchor="Zahlungsziel", raw="Spätestens zum angegebenen Zahlungsziel.")
+    lifted = deadline_from_rule(rule)
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+def test_an_unverzueglich_without_a_latest_bound_stays_complete() -> None:
+    lifted = deadline_from_rule(DeadlineRule(type="unverzüglich", raw="Unverzüglich nach Kenntnisnahme."))
+    assert lifted is not None and lifted.coverage == "complete"
+
+
+def test_the_tag_is_unchanged_by_the_widened_coverage() -> None:
+    rule = DeadlineRule(
+        type="unverzüglich", raw="Unverzüglich, spätestens am folgenden WT nach Erhalt der Anforderung."
+    )
+    assert deadline_tag(rule) == "{u}"

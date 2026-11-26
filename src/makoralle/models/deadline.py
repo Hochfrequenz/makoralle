@@ -284,6 +284,11 @@ _KIND_BY_TYPE: dict[str, Literal["immediate", "parallel", "scheduled", "referenc
 
 #: "jedoch spätester ÜT ist ...", "spätester ÜZ ist ..." — the prose states a hard date.
 _BACKSTOP = re.compile(r"jedoch\s+sp[äa]test|sp[äa]tester\s+(?:ÜT|ÜZ)\s+ist", re.I)
+#: "spätestens …", "spätester …": the prose names a latest date. Only read for ``unverzüglich``
+#: rules, where the tag is ``{u}`` unless the flat fields held an offset or a clock, so a
+#: bound the structure lacks is invisible on the arrow (mako_prozesse#302, makorele#101).
+#: Deliberately not read for ``terminiert``: its tag IS the bound (``{≤Zahlungsziel}``).
+_LATEST_BOUND = re.compile(r"\bsp[äa]test(?:ens|er)\b", re.I)
 #: Two or more alternatives selected by a condition, which the flat rule cannot hold.
 _CONDITIONAL = re.compile(r"(?:•.{0,400}•)|\bAnsonsten\b|\bI\.\)|\bII\.\)|Sofern\b.{0,80}\bgilt\s*:", re.S)
 #: "der 1. WT nach dem ÜT von Nr. 3 bzw. 4" — ``reference_step`` holds one step.
@@ -345,6 +350,14 @@ def _loss_in(raw: str, alternative: DeadlineAlternative) -> str | None:
         backstop = alternative.backstop
         if backstop is None or (backstop.offset is None and backstop.latest_time is None):
             return "a hard date stated in prose and nowhere else"
+    # Wordings `_BACKSTOP` does not name: "spätestens jedoch 1 WT nach …", "spätestens am
+    # folgenden WT …", "spätestens bis zum Ablauf des 10. WT …". An `unverzüglich` whose flat
+    # fields hold no offset and no clock draws a bare `{u}`, so the bound exists only in `raw`.
+    # A rule whose tag already shows a bound (offset or clock) is not touched.
+    if alternative.kind == "immediate" and _LATEST_BOUND.search(raw):
+        backstop = alternative.backstop
+        if backstop is None or (backstop.offset is None and backstop.latest_time is None):
+            return "a latest date stated in prose that the tag does not show"
 
     # The constrained event and the anchor's event share one field on the flat rule, so when
     # the prose names both and they DIFFER, whichever the field does not hold is lost.
