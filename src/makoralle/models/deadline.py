@@ -289,6 +289,32 @@ _BACKSTOP = re.compile(r"jedoch\s+sp[äa]test|sp[äa]tester\s+(?:ÜT|ÜZ)\s+ist"
 #: bound the structure lacks is invisible on the arrow (mako_prozesse#302, makorele#101).
 #: Deliberately not read for ``terminiert``: its tag IS the bound (``{≤Zahlungsziel}``).
 _LATEST_BOUND = re.compile(r"\bsp[äa]test(?:ens|er)\b", re.I)
+#: Only read for ``unverzüglich`` rules, like ``_LATEST_BOUND`` and for the same reason: the tag is
+#: ``{u}`` or ``{u ÜZ#n}`` and the flat rule holds one clause. Each pattern names a second timing
+#: clause the rule cannot hold (mako_prozesse#308, makorele#101), found by reading every distinct
+#: ``unverzüglich`` wording of dataset v0.0.49 that none of the patterns above flags:
+#:
+#: * a bound from BELOW — "frühester ÜT ist der 9. WT", "mindestens 20 WT vor …": the rule only
+#:   has bounds from above (``business_days``/``latest_time`` are "spätestens");
+#: * "a) … b) …" enumerated alternatives;
+#: * a second SENTENCE ("… Bei Anmeldungen … mindestens 10 WT …"). The lookbehind wants a word of
+#:   three lowercase letters before the stop, so "10. WT", "Nr. 2" and "ggf. 4." do not count,
+#:   and "bzw." is excluded ("im Profil bzw. Profilschar");
+#: * a later clause (after "sowie", "bzw.", ":", ";" or a bullet) that says "unverzüglich" again;
+#: * "bzw. nach …" between two anchors ("nach dem ÜZ von Nr. 2 … bzw. nach dem ÜZ von Nr. 3").
+#:
+#: Not read, on purpose: a trailing "sofern/wenn …" (it scopes whether the step happens, and the
+#: tag already carries its timing), "oder" and a bare "bzw." ("Profil bzw. Profilschar").
+_SECOND_CLAUSE: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bfrühest(?:er|ens)\b|\bmindestens\s+\d+", re.I), "a lower bound, which the rule cannot hold"),
+    (re.compile(r"(?:^|\s)a\)\s.*\sb\)\s", re.S), 'enumerated alternatives "a) … b) …"'),
+    (re.compile(r"(?<!bzw)(?<=[a-zäöüß]{3})[.!?]\s+[A-ZÄÖÜ]"), "a second sentence, which the rule cannot hold"),
+    (
+        re.compile(r"(?:\bsowie\b|\bbzw\.|[:;•])[^.]{0,60}?\bunverzüglich\b", re.I),
+        "a second clause that again says unverzüglich",
+    ),
+    (re.compile(r"\bbzw\.\s+nach\b", re.I), '"bzw. nach …": a second anchor'),
+)
 #: Two or more alternatives selected by a condition, which the flat rule cannot hold.
 _CONDITIONAL = re.compile(r"(?:•.{0,400}•)|\bAnsonsten\b|\bI\.\)|\bII\.\)|Sofern\b.{0,80}\bgilt\s*:", re.S)
 #: "der 1. WT nach dem ÜT von Nr. 3 bzw. 4" — ``reference_step`` holds one step.
@@ -358,6 +384,10 @@ def _loss_in(raw: str, alternative: DeadlineAlternative) -> str | None:
         backstop = alternative.backstop
         if backstop is None or (backstop.offset is None and backstop.latest_time is None):
             return "a latest date stated in prose that the tag does not show"
+    if alternative.kind == "immediate":
+        for pattern, why in _SECOND_CLAUSE:
+            if pattern.search(raw):
+                return f"a second Frist clause in prose ({why}) that the tag does not show"
 
     # The constrained event and the anchor's event share one field on the flat rule, so when
     # the prose names both and they DIFFER, whichever the field does not hold is lost.
