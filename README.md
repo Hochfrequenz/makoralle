@@ -80,7 +80,10 @@ document. A `Bundle` (in `models.formatversion`) names, for each document key (`
 `ebd`, …), the edition that applies, and, in `categories`, which category (`GPKE`, `WiM`,
 `MaBiS`, `Sonstige`) the processes cut from a document are meant to get — declared here, read by
 the parser (makorele), not by makoralle; a key there must be a document key, a document without an
-entry is meant to give its processes `""`, and the table may be empty.
+entry is meant to give its processes `""`, and the table may be empty. `category_overrides`, keyed by
+process id, wins over that row for a process listed under another category than its document's
+(free labels, not required to occur in `categories`); `bundle.category_for(doc_key, process_id)` is the
+lookup (override, else the document's row, else `""`).
 `sparten` does the same for the Sparte (`strom` or `gas`), and `sparte_overrides`, keyed by process
 id, wins over it for a process whose topic is the other Sparte than its document's;
 `bundle.sparte_for(doc_key, process_id)` is the lookup, and gives `None` rather than a guessed
